@@ -1,3 +1,4 @@
+import { releaseClipAudio } from '../media/clipAudio'
 import { releaseClipUrl } from '../media/clipUrls'
 import { arrayMove } from '../timeline/reorder'
 import { maxTransition, totalDuration } from '../timeline/timeline'
@@ -169,6 +170,7 @@ class ProjectStore {
     syncTransitions(this.project)
     revokeAll(clip!.thumbnails)
     releaseClipUrl(clip!.blobKey)
+    releaseClipAudio(clip!.blobKey)
     this.scheduleSave()
     await db.deleteClipData(clip!.blobKey, clip!.thumbKeys)
   }

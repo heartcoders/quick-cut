@@ -3,6 +3,7 @@
   import { RenderCancelled, startRender, type RenderJob } from '../lib/export/exportV1'
   import { exportV2, supportsExportV2 } from '../lib/export/exportV2'
   import { buildRenderClips, plainTransitions } from '../lib/export/renderInput'
+  import { getClipAudio } from '../lib/media/clipAudio'
   import { canShareFile, isIOS, saveVideo, toFile } from '../lib/platform/save'
   import { acquireWakeLock } from '../lib/platform/wakeLock'
   import { store } from '../lib/project/store.svelte'
@@ -59,7 +60,9 @@
   $effect(() => {
     let cancelled = false
     void buildRenderClips(store.playableClips).then((r) => {
-      if (!cancelled) renderClips = r
+      if (cancelled) return
+      renderClips = r
+      for (const c of r) void getClipAudio(c.blobKey) // Ton vorab dekodieren
     })
     return () => (cancelled = true)
   })

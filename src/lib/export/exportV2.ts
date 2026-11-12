@@ -10,15 +10,9 @@ import * as db from '../project/db'
 import type { AspectRatio } from '../project/types'
 import { EXPORT_FPS, outputSize } from '../renderer/geometry'
 import type { RenderClip, Renderer } from '../renderer/types'
-import {
-  clipStartTimes,
-  effectiveDurations,
-  equalPowerGains,
-  resolveFrame,
-  totalDuration,
-  trimmedLength,
-  type TransitionSpec,
-} from '../timeline/timeline'
+import { getClipAudio } from '../media/clipAudio'
+import { scheduleTimelineAudio } from '../timeline/audioSchedule'
+import { resolveFrame, totalDuration, type TransitionSpec } from '../timeline/timeline'
 import { EXPORT_VIDEO_BITRATE, RenderCancelled, type RenderResult } from './exportV1'
 
 const AUDIO_SAMPLE_RATE = 48_000
@@ -61,54 +55,22 @@ export interface ExportV2Options {
   onProgress?: (t: number) => void
 }
 
-/** Equal-Power-Kurve für setValueCurveAtTime (ein- bzw. ausblenden). */
-function fadeCurve(fadeIn: boolean, steps = 64): Float32Array {
-  const c = new Float32Array(steps)
-  for (let i = 0; i < steps; i++) {
-    const [out, inn] = equalPowerGains(i / (steps - 1))
-    c[i] = fadeIn ? inn : out
-  }
-  return c
-}
-
 /**
- * Ton der ganzen Timeline offline mischen – inkl. Überblendungen, gleiche
- * Kurven wie in der Echtzeit-Vorschau. Clips ohne (dekodierbaren) Ton bleiben stumm.
+ * Ton der ganzen Timeline offline mischen – mit derselben Planung wie die
+ * Live-Vorschau (scheduleTimelineAudio). Clips ohne Ton bleiben stumm.
  */
 async function renderAudio(
   clips: RenderClip[],
   transitions: TransitionSpec[],
-  blobs: Blob[],
   total: number,
   signal: AbortSignal,
 ): Promise<AudioBuffer | null> {
+  const buffers = await Promise.all(clips.map((c) => getClipAudio(c.blobKey)))
+  if (signal.aborted) throw new RenderCancelled()
+  if (!buffers.some(Boolean)) return null
   const ctx = new OfflineAudioContext(2, Math.max(1, Math.ceil(total * AUDIO_SAMPLE_RATE)), AUDIO_SAMPLE_RATE)
-  const starts = clipStartTimes(clips, transitions)
-  const d = effectiveDurations(clips, transitions)
-  let any = false
-
-  for (const [i, clip] of clips.entries()) {
-    if (signal.aborted) throw new RenderCancelled()
-    let decoded: AudioBuffer
-    try {
-      decoded = await ctx.decodeAudioData(await blobs[i]!.arrayBuffer())
-    } catch {
-      continue // keine Tonspur
-    }
-    any = true
-    const len = trimmedLength(clip)
-    const start = starts[i]!
-    const src = ctx.createBufferSource()
-    src.buffer = decoded
-    const gain = ctx.createGain()
-    src.connect(gain).connect(ctx.destination)
-    const dIn = i > 0 ? (d[i - 1] ?? 0) : 0
-    const dOut = d[i] ?? 0
-    if (dIn > 0) gain.gain.setValueCurveAtTime(fadeCurve(true), start, dIn)
-    if (dOut > 0) gain.gain.setValueCurveAtTime(fadeCurve(false), start + len - dOut, dOut)
-    src.start(start, clip.trimStart, len)
-  }
-  return any ? ctx.startRendering() : null
+  scheduleTimelineAudio(ctx, ctx.destination, clips, buffers, transitions, { fromTime: 0, when: 0 })
+  return ctx.startRendering()
 }
 
 interface ClipDecoder {
@@ -145,7 +107,7 @@ export async function exportV2(opts: ExportV2Options): Promise<RenderResult> {
     if (f.to) timestamps[f.to.index]!.push(f.to.localTime)
   }
 
-  const audio = await renderAudio(clips, transitions, blobs, total, signal)
+  const audio = await renderAudio(clips, transitions, total, signal)
   check()
 
   const target = new mb.BufferTarget()

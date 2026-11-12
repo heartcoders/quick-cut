@@ -1,5 +1,7 @@
 import { SequencePlayer, type FrameState } from '../media/sequencePlayer'
-import { equalPowerGains, type TransitionSpec } from '../timeline/timeline'
+import { getClipAudio } from '../media/clipAudio'
+import { scheduleTimelineAudio } from '../timeline/audioSchedule'
+import { clipStartTimes, type TransitionSpec } from '../timeline/timeline'
 import { pickRecorderMimeType } from '../platform/mediaFormat'
 import type { AspectRatio } from '../project/types'
 import { EXPORT_FPS } from '../renderer/geometry'
@@ -73,20 +75,29 @@ export function startRender(opts: RenderOptions): RenderJob {
   })
 
   audio?.setSpeakers(!record)
-  const gains = audio ? videos.map((v) => audio.attach(v)) : []
   void audio?.resume()
+  // Ton aus dekodierten Puffern (die Videos selbst sind stumm, siehe clipAudio.ts).
+  const buffers = audio ? Promise.all(clips.map((c) => getClipAudio(c.blobKey))) : null
+  const starts = clipStartTimes(clips, transitions)
+  let scheduled: { stop(): void } | null = null
 
-  /** Equal-Power-Überblendung: Lautheit bleibt während des Übergangs konstant. */
-  const applyGains = (f: FrameState) => {
-    if (!audio) return
-    for (const [i, v] of videos.entries()) {
-      const g = gains[i]!
-      const [out, inn] = equalPowerGains(f.p)
-      let value = 0
-      if (v === f.from) value = f.to ? out : 1
-      else if (v === f.to) value = inn
-      g.gain.value = value
-    }
+  /** Aktuelle Timeline-Zeit aus dem laufenden Video ableiten. */
+  const timelineNow = (): number => {
+    const f = frame
+    if (!f) return opts.fromTime ?? 0
+    const c = clips[f.fromIndex]!
+    return starts[f.fromIndex]! + Math.max(0, f.from.currentTime - c.trimStart)
+  }
+
+  /** Ton so planen, dass er zur aktuellen Bildposition passt. */
+  const startAudio = async () => {
+    if (!audio || !buffers) return
+    const bufs = await buffers
+    if (finished) return
+    scheduled = scheduleTimelineAudio(audio.ctx, audio.input, clips, bufs, transitions, {
+      fromTime: timelineNow(),
+      when: audio.ctx.currentTime,
+    })
   }
 
   const drawCurrent = () => {
@@ -124,7 +135,8 @@ export function startRender(opts: RenderOptions): RenderJob {
     clearTimeout(firstFrameTimer)
     player.stop()
     canvasTrack?.stop() // nur den Canvas-Track; der Audio-Track gehört dem Graph
-    for (const g of gains) g.gain.value = 1
+    scheduled?.stop()
+    scheduled = null
     audio?.setSpeakers(true)
   }
 
@@ -158,12 +170,12 @@ export function startRender(opts: RenderOptions): RenderJob {
     },
     onFrame: (f) => {
       frame = f
-      applyGains(f)
       opts.onFrame?.(f)
     },
     onReady: () => {
       clearTimeout(firstFrameTimer)
       drawCurrent()
+      void startAudio()
       opts.onReady?.()
       if (record && !recorder) {
         drawCurrent()

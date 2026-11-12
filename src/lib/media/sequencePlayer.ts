@@ -98,20 +98,15 @@ export class SequencePlayer {
 
     const [a, b] = this.#els
     const first = clips[startIndex]!
+    // Beide Videos immer stumm: iOS lässt nur EIN unstummes Video gleichzeitig
+    // spielen und pausiert sonst das andere. Der Ton kommt separat (clipAudio).
+    // Stumme Videos dürfen auf iOS zudem ohne Tap-Geste starten.
+    a.muted = true
+    b.muted = true
     if (a.src !== first.url) a.src = first.url
     a.currentTime = Math.min(startLocal, first.trimEnd - 0.05)
-    a.muted = false
-
-    // iOS: beide Elemente innerhalb der Geste einmal abspielen → später ohne Geste erlaubt.
-    const second = clips[startIndex + 1] ?? first
-    if (b.src !== second.url) b.src = second.url
-    b.muted = true
-    b.play()
-      .then(() => b.pause())
-      .catch(() => {})
-      .finally(() => {
-        b.muted = false
-      })
+    const second = clips[startIndex + 1]
+    if (second && b.src !== second.url) b.src = second.url
 
     void this.#run(session, clips, transitions, d, startIndex, a.play())
   }

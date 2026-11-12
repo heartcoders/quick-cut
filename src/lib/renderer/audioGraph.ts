@@ -1,14 +1,14 @@
 /**
- * Ton der Clip-Videos über die Web Audio API: pro <video> eine Quelle mit
- * eigenem Gain (Phase 6: Überblendungen), Ausgang an Lautsprecher und/oder
- * einen MediaStream für den Export.
+ * Ausgang für den Projekt-Ton: `input` → Lautsprecher (Vorschau) und
+ * MediaStream (Export v1). Der Ton selbst wird aus dekodierten Puffern
+ * geplant (scheduleTimelineAudio), nicht aus den <video>-Elementen.
  */
 export class AudioGraph {
   readonly ctx: AudioContext
   readonly stream: MediaStream
+  /** Hier werden die Clip-Quellen angeschlossen. */
+  readonly input: GainNode
   #speakers: GainNode
-  #dest: MediaStreamAudioDestinationNode
-  #gains = new WeakMap<HTMLMediaElement, GainNode>()
 
   /** Erzeugt den Graph oder liefert null (dann ohne Ton). Im Tap aufrufen. */
   static tryCreate(): AudioGraph | null {
@@ -23,24 +23,19 @@ export class AudioGraph {
   /** Im Tap erzeugen – iOS startet den Context sonst im Zustand „suspended“. */
   constructor() {
     this.ctx = new AudioContext()
-    this.#dest = this.ctx.createMediaStreamDestination()
-    this.stream = this.#dest.stream
+    const dest = this.ctx.createMediaStreamDestination()
+    this.stream = dest.stream
+    this.input = this.ctx.createGain()
     this.#speakers = this.ctx.createGain()
+    this.input.connect(dest)
+    this.input.connect(this.#speakers)
     this.#speakers.connect(this.ctx.destination)
-  }
-
-  /** Pro Element nur einmal möglich; danach läuft dessen Ton nur noch durch den Graph. */
-  attach(el: HTMLMediaElement): GainNode {
-    let g = this.#gains.get(el)
-    if (!g) {
-      const src = this.ctx.createMediaElementSource(el)
-      g = this.ctx.createGain()
-      src.connect(g)
-      g.connect(this.#dest)
-      g.connect(this.#speakers)
-      this.#gains.set(el, g)
+    // Diagnose (?debug=1 bzw. Tests): Pegel am Ausgang messbar machen.
+    if (typeof location !== 'undefined' && new URLSearchParams(location.search).has('debug')) {
+      const analyser = this.ctx.createAnalyser()
+      this.input.connect(analyser)
+      ;(globalThis as { __qcAnalyser?: AnalyserNode }).__qcAnalyser = analyser
     }
-    return g
   }
 
   setSpeakers(on: boolean): void {

@@ -2,6 +2,7 @@
   import { onMount } from 'svelte'
   import { startRender, type RenderJob } from '../lib/export/exportV1'
   import { buildRenderClips, plainTransitions } from '../lib/export/renderInput'
+  import { getClipAudio } from '../lib/media/clipAudio'
   import { getClipUrl } from '../lib/media/clipUrls'
   import { playRange } from '../lib/media/rangePlayer'
   import { createSeeker, type Seeker } from '../lib/media/seeker'
@@ -88,6 +89,8 @@
       if (cancelled) return
       renderClips = r
       renderClipIds = ids
+      // Ton vorab dekodieren, damit er beim Tippen auf „Alles“ schon bereitliegt.
+      for (const c of r) void getClipAudio(c.blobKey)
     })
     return () => (cancelled = true)
   })
