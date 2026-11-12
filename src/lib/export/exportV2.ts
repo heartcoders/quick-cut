@@ -10,8 +10,8 @@ import * as db from '../project/db'
 import type { AspectRatio } from '../project/types'
 import { EXPORT_FPS, outputSize } from '../renderer/geometry'
 import type { RenderClip, Renderer } from '../renderer/types'
-import { getClipAudio } from '../media/clipAudio'
-import { scheduleTimelineAudio } from '../timeline/audioSchedule'
+import { scheduleProjectAudio } from '../timeline/audioSchedule'
+import { hasAudio, loadProjectAudio, type AudioTracks } from './renderInput'
 import { resolveFrame, totalDuration, type TransitionSpec } from '../timeline/timeline'
 import { EXPORT_VIDEO_BITRATE, RenderCancelled, type RenderResult } from './exportV1'
 
@@ -49,6 +49,8 @@ export async function supportsExportV2(aspect: AspectRatio): Promise<boolean> {
 export interface ExportV2Options {
   clips: RenderClip[]
   transitions: TransitionSpec[]
+  /** Musik und Voiceover */
+  tracks?: AudioTracks
   aspect: AspectRatio
   renderer: Renderer
   signal: AbortSignal
@@ -56,20 +58,21 @@ export interface ExportV2Options {
 }
 
 /**
- * Ton der ganzen Timeline offline mischen – mit derselben Planung wie die
- * Live-Vorschau (scheduleTimelineAudio). Clips ohne Ton bleiben stumm.
+ * Ton des ganzen Projekts offline mischen – mit derselben Planung wie die
+ * Live-Vorschau (scheduleProjectAudio): Clips, Musik, Voiceover.
  */
 async function renderAudio(
   clips: RenderClip[],
   transitions: TransitionSpec[],
+  tracks: AudioTracks | undefined,
   total: number,
   signal: AbortSignal,
 ): Promise<AudioBuffer | null> {
-  const buffers = await Promise.all(clips.map((c) => getClipAudio(c.blobKey)))
+  const input = await loadProjectAudio(clips, transitions, tracks)
   if (signal.aborted) throw new RenderCancelled()
-  if (!buffers.some(Boolean)) return null
+  if (!hasAudio(input)) return null
   const ctx = new OfflineAudioContext(2, Math.max(1, Math.ceil(total * AUDIO_SAMPLE_RATE)), AUDIO_SAMPLE_RATE)
-  scheduleTimelineAudio(ctx, ctx.destination, clips, buffers, transitions, { fromTime: 0, when: 0 })
+  scheduleProjectAudio(ctx, ctx.destination, input, { fromTime: 0, when: 0 })
   return ctx.startRendering()
 }
 
@@ -107,7 +110,7 @@ export async function exportV2(opts: ExportV2Options): Promise<RenderResult> {
     if (f.to) timestamps[f.to.index]!.push(f.to.localTime)
   }
 
-  const audio = await renderAudio(clips, transitions, total, signal)
+  const audio = await renderAudio(clips, transitions, opts.tracks, total, signal)
   check()
 
   const target = new mb.BufferTarget()
@@ -173,6 +176,7 @@ export async function exportV2(opts: ExportV2Options): Promise<RenderResult> {
         const from = await frameOf(f.from.index)
         const to = f.to ? await frameOf(f.to.index) : null
         // Dekodierte Frames sind bereits aufrecht → nur den Ausschnitt übernehmen.
+        renderer.setTime(i / EXPORT_FPS)
         const pf = { ...clips[f.from.index]!, rotation: 0 }
         const pt = f.to ? { ...clips[f.to.index]!, rotation: 0 } : pf
         if (from && to) renderer.drawTransition(from, to, f.p, f.type, pf, pt)

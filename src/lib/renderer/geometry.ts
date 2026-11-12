@@ -1,4 +1,4 @@
-import type { AspectRatio } from '../project/types'
+import type { AspectRatio, ClipLook } from '../project/types'
 
 export const EXPORT_FPS = 30
 
@@ -28,6 +28,8 @@ export interface Placement {
   /** Ausschnitt-Position 0…1 (0.5 = mittig), bezogen auf die gedrehte Quelle. */
   panX: number
   panY: number
+  /** Filter und Effekte; fehlt = neutral. */
+  look?: ClipLook
 }
 
 export const CENTER: Placement = { rotation: 0, panX: 0.5, panY: 0.5 }

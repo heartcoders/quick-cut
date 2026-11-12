@@ -20,6 +20,15 @@ export function pickRecorderMimeType(
   return RECORDER_MIME_CANDIDATES.find((t) => isSupported(t))
 }
 
+/** Voiceover: AAC/MP4 (Safari) vor Opus/WebM (Chrome, Firefox). */
+export const AUDIO_RECORDER_MIME_CANDIDATES = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm'] as const
+
+export function pickAudioRecorderMimeType(
+  isSupported: (type: string) => boolean = defaultIsSupported,
+): string | undefined {
+  return AUDIO_RECORDER_MIME_CANDIDATES.find((t) => isSupported(t))
+}
+
 /** `video/mp4;codecs=…` → `video/mp4` */
 export function baseMime(mime: string): string {
   return mime.split(';')[0]!.trim().toLowerCase()

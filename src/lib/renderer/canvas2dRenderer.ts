@@ -1,12 +1,36 @@
 import type { TransitionType } from '../timeline/timeline'
 import { BaseRenderer } from './baseRenderer'
+import type { ClipLook } from '../project/types'
 import { CENTER, coverCrop, easeInOut, isFrameReady, sourceSize, type FrameSource, type Placement } from './geometry'
+import { canvasFilter } from './looks'
 
+const NOISE_SIZE = 256
 
-/** Fallback ohne WebGL2: gleiche Cover-Logik und gleiche Übergänge per Canvas 2D. */
+/** Graues Rauschmuster fürs Filmkorn (einmal erzeugt, dann als Pattern verschoben). */
+function makeNoise(): HTMLCanvasElement {
+  const c = document.createElement('canvas')
+  c.width = c.height = NOISE_SIZE
+  const ctx = c.getContext('2d')!
+  const img = ctx.createImageData(NOISE_SIZE, NOISE_SIZE)
+  for (let i = 0; i < img.data.length; i += 4) {
+    const v = Math.random() * 255
+    img.data[i] = img.data[i + 1] = img.data[i + 2] = v
+    img.data[i + 3] = 255
+  }
+  ctx.putImageData(img, 0, 0)
+  return c
+}
+
+/**
+ * Fallback ohne WebGL2: gleiche Cover-Logik und gleiche Übergänge per Canvas 2D.
+ * Der Look ist hier nur angenähert: Filter über ctx.filter, Vignette als
+ * radialer Verlauf, Korn als Rauschmuster. VHS und Glitch gibt es nur im
+ * WebGL2-Renderer.
+ */
 export class Canvas2DRenderer extends BaseRenderer {
   readonly kind = 'canvas2d' as const
   #ctx: CanvasRenderingContext2D
+  #noise: CanvasPattern | null = null
 
   constructor(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D) {
     super(canvas)
@@ -29,15 +53,46 @@ export class Canvas2DRenderer extends BaseRenderer {
     ctx.save()
     ctx.translate(W / 2 + dx + px, H / 2 + py)
     ctx.rotate((rotation * Math.PI) / 180)
+    const filter = canvasFilter(place.look)
+    if (filter !== 'none') ctx.filter = filter
     const w = size.width * scale
     const h = size.height * scale
     ctx.drawImage(video, -w / 2, -h / 2, w, h)
     ctx.restore()
   }
 
+  /** Vignette und Korn über das fertige Bild legen (alpha: Anteil im Übergang). */
+  #effects(look: ClipLook | undefined, alpha = 1) {
+    if (!look || alpha <= 0) return
+    const { width: W, height: H } = this.canvas
+    const ctx = this.#ctx
+    if (look.vignette > 0) {
+      const r = Math.hypot(W, H) / 2
+      const g = ctx.createRadialGradient(W / 2, H / 2, r * 0.25, W / 2, H / 2, r)
+      g.addColorStop(0, 'rgba(0,0,0,0)')
+      g.addColorStop(1, `rgba(0,0,0,${0.85 * look.vignette * alpha})`)
+      ctx.fillStyle = g
+      ctx.fillRect(0, 0, W, H)
+    }
+    if (look.grain > 0) {
+      this.#noise ??= ctx.createPattern(makeNoise(), 'repeat')
+      if (!this.#noise) return
+      // Pro Frame (30 fps) anders verschieben, damit das Korn lebt.
+      const f = Math.floor(this.time * 30)
+      ctx.save()
+      ctx.globalAlpha = 0.35 * look.grain * alpha
+      ctx.globalCompositeOperation = 'overlay'
+      ctx.translate(-((f * 97) % NOISE_SIZE), -((f * 61) % NOISE_SIZE))
+      ctx.fillStyle = this.#noise
+      ctx.fillRect(0, 0, W + NOISE_SIZE, H + NOISE_SIZE)
+      ctx.restore()
+    }
+  }
+
   drawVideo(video: FrameSource, place: Placement = CENTER): void {
     if (!isFrameReady(video)) return
     this.#cover(video, place)
+    this.#effects(place.look)
   }
 
   drawTransition(
@@ -86,6 +141,8 @@ export class Canvas2DRenderer extends BaseRenderer {
         ctx.restore()
         break
     }
+    this.#effects(placeFrom.look, 1 - p)
+    this.#effects(placeTo.look, p)
   }
 
   clear(): void {

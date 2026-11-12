@@ -38,6 +38,10 @@ export async function getBlob(key: string): Promise<Blob | undefined> {
   return (await db()).get('blobs', key)
 }
 
+export async function deleteBlob(key: string): Promise<void> {
+  await (await db()).delete('blobs', key)
+}
+
 export async function putThumb(key: string, blob: Blob): Promise<void> {
   await (await db()).put('thumbs', blob, key)
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { baseMime, extensionFor, pickRecorderMimeType } from './mediaFormat'
+import { baseMime, extensionFor, pickAudioRecorderMimeType, pickRecorderMimeType } from './mediaFormat'
 
 describe('pickRecorderMimeType', () => {
   it('nimmt MP4 mit Codecs, wenn verfügbar (Safari)', () => {
@@ -29,5 +29,18 @@ describe('extensionFor / baseMime', () => {
   })
   it('entfernt Parameter', () => {
     expect(baseMime('Video/MP4; codecs="avc1"')).toBe('video/mp4')
+  })
+})
+
+describe('pickAudioRecorderMimeType', () => {
+  it('bevorzugt AAC/MP4 (Safari)', () => {
+    expect(pickAudioRecorderMimeType(() => true)).toBe('audio/mp4')
+  })
+  it('nimmt sonst Opus in WebM (Chrome)', () => {
+    const supported = new Set(['audio/webm', 'audio/webm;codecs=opus'])
+    expect(pickAudioRecorderMimeType((t) => supported.has(t))).toBe('audio/webm;codecs=opus')
+  })
+  it('liefert undefined, wenn nichts passt', () => {
+    expect(pickAudioRecorderMimeType(() => false)).toBeUndefined()
   })
 })

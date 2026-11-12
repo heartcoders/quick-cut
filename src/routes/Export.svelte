@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import { RenderCancelled, startRender, type RenderJob } from '../lib/export/exportV1'
   import { exportV2, supportsExportV2 } from '../lib/export/exportV2'
-  import { buildRenderClips, plainTransitions } from '../lib/export/renderInput'
+  import { buildAudioTracks, buildRenderClips, plainTransitions } from '../lib/export/renderInput'
   import { getClipAudio } from '../lib/media/clipAudio'
   import { canShareFile, isIOS, saveVideo, toFile } from '../lib/platform/save'
   import { acquireWakeLock } from '../lib/platform/wakeLock'
@@ -61,6 +61,7 @@
       if (cancelled) return
       renderClips = r
       for (const c of r) void getClipAudio(c.blobKey) // Ton vorab dekodieren
+      for (const k of [store.project.music?.blobKey, store.project.voiceover?.blobKey]) if (k) void getClipAudio(k)
     })
     return () => (cancelled = true)
   })
@@ -121,6 +122,7 @@
     job = startRender({
       clips: renderClips,
       transitions,
+      tracks: buildAudioTracks(store.project),
       aspect,
       renderer,
       videos: [videoA, videoB],
@@ -140,6 +142,7 @@
     const done = exportV2({
       clips: renderClips!,
       transitions,
+      tracks: buildAudioTracks(store.project),
       aspect,
       renderer: renderer!,
       signal: ac.signal,

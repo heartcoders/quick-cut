@@ -1,6 +1,7 @@
 import type { TransitionType } from '../timeline/timeline'
 import { BaseRenderer } from './baseRenderer'
 import { CENTER, coverCrop, isFrameReady, sourceSize, type FrameSource, type Placement } from './geometry'
+import { lookUniforms } from './looks'
 import { COVER_FRAGMENT, transitionFragment, VERTEX } from './shaders'
 
 type ProgramName = 'cover' | Exclude<TransitionType, 'none'>
@@ -10,7 +11,14 @@ interface Prog {
   u: Record<string, WebGLUniformLocation | null>
 }
 
-const UNIFORMS = ['uFrom', 'uTo', 'uScaleA', 'uOffsetA', 'uRotA', 'uScaleB', 'uOffsetB', 'uRotB', 'progress']
+const UNIFORMS = [
+  'uFrom',
+  'uTo',
+  'progress',
+  'uTime',
+  'uRes',
+  ...['A', 'B'].flatMap((s) => [`uScale${s}`, `uOffset${s}`, `uRot${s}`, `uGrade${s}`, `uGrade2${s}`, `uFx${s}`]),
+]
 
 function compile(gl: WebGL2RenderingContext, type: number, src: string): WebGLShader {
   const sh = gl.createShader(type)!
@@ -92,6 +100,16 @@ export class WebGL2Renderer extends BaseRenderer {
     gl.uniform2f(prog.u[`uScale${s}`]!, c.uvScale[0], c.uvScale[1])
     gl.uniform2f(prog.u[`uOffset${s}`]!, c.uvOffset[0], c.uvOffset[1])
     gl.uniform1f(prog.u[`uRot${s}`]!, (rotation * Math.PI) / 180)
+    const look = lookUniforms(place.look)
+    gl.uniform4fv(prog.u[`uGrade${s}`]!, look.grade)
+    gl.uniform4fv(prog.u[`uGrade2${s}`]!, look.grade2)
+    gl.uniform4fv(prog.u[`uFx${s}`]!, look.fx)
+  }
+
+  /** Gemeinsame Uniforms für Zeit und Auflösung (Korn, Scanlines, Vignette). */
+  #frameUniforms(prog: Prog) {
+    this.#gl.uniform1f(prog.u.uTime!, this.time)
+    this.#gl.uniform2f(prog.u.uRes!, this.canvas.width, this.canvas.height)
   }
 
   protected override onResize(w: number, h: number): void {
@@ -101,6 +119,7 @@ export class WebGL2Renderer extends BaseRenderer {
   drawVideo(video: FrameSource, place: Placement = CENTER): void {
     if (!isFrameReady(video)) return
     const prog = this.#use('cover')
+    this.#frameUniforms(prog)
     this.#upload(0, video, place, prog)
     this.#gl.drawArrays(this.#gl.TRIANGLE_STRIP, 0, 4)
   }
@@ -116,6 +135,7 @@ export class WebGL2Renderer extends BaseRenderer {
     if (type === 'none' || !isFrameReady(to)) return this.drawVideo(from, placeFrom)
     if (!isFrameReady(from)) return this.drawVideo(to, placeTo)
     const prog = this.#use(type)
+    this.#frameUniforms(prog)
     this.#upload(0, from, placeFrom, prog)
     this.#upload(1, to, placeTo, prog)
     this.#gl.uniform1f(prog.u.progress!, p)

@@ -14,6 +14,10 @@ export interface ClipRecord {
   /** Ausschnitt-Position im Zielformat, 0…1 (0.5 = mittig). Fehlt bei alten Projekten. */
   panX?: number
   panY?: number
+  /** Filter und Effekte. Fehlt bei alten Projekten (= DEFAULT_LOOK). */
+  look?: ClipLook
+  /** Lautstärke des Clip-Tons 0…1 (0 = stumm). Fehlt = 1. */
+  volume?: number
   trimStart: number // Sekunden, >= 0
   trimEnd: number // Sekunden, <= duration
   source: ClipSource
@@ -27,9 +31,52 @@ export interface Clip extends ClipRecord {
   status: ClipStatus
 }
 
+export type FilterId = 'none' | 'warm' | 'cool' | 'vivid' | 'fade' | 'retro' | 'mono' | 'noir'
+
+/** Look eines Clips: Farbfilter plus Effekte, alle Stärken 0…1 (0 = aus). */
+export interface ClipLook {
+  filter: FilterId
+  /** Stärke des Filters */
+  amount: number
+  grain: number
+  vignette: number
+  vhs: number
+  glitch: number
+}
+
+export const DEFAULT_LOOK: ClipLook = { filter: 'none', amount: 1, grain: 0, vignette: 0, vhs: 0, glitch: 0 }
+
 export interface Transition {
   type: 'none' | 'crossfade' | 'slide' | 'wipe'
   duration: number // Sekunden
+}
+
+/** Hintergrundmusik aus einer eigenen Audiodatei. */
+export interface MusicTrack {
+  blobKey: string
+  name: string
+  /** Länge des Songs in Sekunden */
+  duration: number
+  /** Startpunkt im Song (s) */
+  offset: number
+  volume: number
+  /** letzte Sekunden ausblenden */
+  fadeOut: boolean
+  /** leiser, solange das Voiceover spricht */
+  duck: boolean
+}
+
+/** Eine Voiceover-Spur fürs ganze Video. */
+export interface VoiceoverTrack {
+  blobKey: string
+  mimeType: string
+  /** Länge der Aufnahme in Sekunden */
+  duration: number
+  /** Timeline-Sekunde, ab der die Aufnahme klingt */
+  start: number
+  /** Sekunden am Anfang der Aufnahme überspringen (Vorlauf vor dem ersten Bild) */
+  skip: number
+  volume: number
 }
 
 export interface ProjectRecord {
@@ -37,6 +84,8 @@ export interface ProjectRecord {
   clips: ClipRecord[]
   transitions: Transition[] // Länge = clips.length - 1
   outputAspect: AspectRatio
+  music?: MusicTrack
+  voiceover?: VoiceoverTrack
 }
 
 export interface Project extends Omit<ProjectRecord, 'clips'> {

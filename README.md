@@ -13,6 +13,8 @@ Gebaut mit Vite, Svelte 5 und TypeScript.
 - **Schneiden** mit Trim-Griffen oder in ±0,1-s-Schritten, Clips per Halten und Ziehen umsortieren
 - **Bildausschnitt** pro Clip verschieben, Format 9:16, 1:1 oder 16:9
 - **Übergänge**: Überblenden, Schieben, Wischen
+- **Look** pro Clip: Farbfilter mit Stärkeregler, dazu Filmkorn, Vignette, VHS und Glitch, auf Wunsch für alle Clips
+- **Ton**: Lautstärke pro Clip, Hintergrundmusik aus eigener Datei (Startpunkt, Ausblenden, automatisch leiser bei Sprache) und Voiceover fürs ganze Video
 - **Export** als MP4 (1080p, H.264 + AAC), danach Teilen bzw. Sichern in Fotos oder Download
 - **PWA**: installierbar und offline nutzbar
 

@@ -1,4 +1,4 @@
-import type { AspectRatio } from '../project/types'
+import type { AspectRatio, ClipLook } from '../project/types'
 import type { TransitionSpec, TransitionType } from '../timeline/timeline'
 import type { FrameSource, Placement } from './geometry'
 
@@ -15,6 +15,9 @@ export interface RenderClip {
   /** Ausschnitt-Position 0…1 (0.5 = mittig). */
   panX: number
   panY: number
+  look: ClipLook
+  /** Lautstärke des Clip-Tons 0…1 */
+  volume: number
 }
 
 export interface RenderProject {
@@ -37,6 +40,10 @@ export interface Renderer {
   renderFrame(t: number): Promise<void>
   /** Zielgröße passend zum Format setzen. */
   setOutput(aspect: AspectRatio): void
+  /** Freie Zielgröße (z. B. Look-Vorschau in Videogröße). */
+  setSize(width: number, height: number): void
+  /** Timeline-Zeit in Sekunden für zeitabhängige Effekte (Korn, VHS, Glitch). */
+  setTime(t: number): void
   /** Zeichnet den aktuellen Frame eines Videos oder eines dekodierten Frames. */
   drawVideo(video: FrameSource, place?: Placement): void
   /** Übergang zwischen zwei spielenden Videos, p = 0…1. */

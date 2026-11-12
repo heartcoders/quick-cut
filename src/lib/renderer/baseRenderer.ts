@@ -31,6 +31,8 @@ export abstract class BaseRenderer implements Renderer {
   #clips: RenderClip[] = []
   #transitions: TransitionSpec[] = []
   #stills: [HTMLVideoElement, HTMLVideoElement]
+  /** Zeit für zeitabhängige Effekte, siehe setTime. */
+  protected time = 0
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas
@@ -49,14 +51,23 @@ export abstract class BaseRenderer implements Renderer {
 
   setOutput(aspect: AspectRatio): void {
     const { width, height } = outputSize(aspect)
+    this.setSize(width, height)
+  }
+
+  setSize(width: number, height: number): void {
     if (this.canvas.width !== width) this.canvas.width = width
     if (this.canvas.height !== height) this.canvas.height = height
     this.onResize(width, height)
   }
 
+  setTime(t: number): void {
+    this.time = t
+  }
+
   async renderFrame(t: number): Promise<void> {
     const f = resolveFrame(this.#clips, this.#transitions, t)
     if (!f) return this.clear()
+    this.setTime(t)
     const [a, b] = this.#stills
     const from = this.#clips[f.from.index]!
     await showAt(a, from, f.from.localTime)

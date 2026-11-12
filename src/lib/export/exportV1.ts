@@ -1,6 +1,6 @@
 import { SequencePlayer, type FrameState } from '../media/sequencePlayer'
-import { getClipAudio } from '../media/clipAudio'
-import { scheduleTimelineAudio } from '../timeline/audioSchedule'
+import { scheduleProjectAudio } from '../timeline/audioSchedule'
+import { loadProjectAudio, type AudioTracks } from './renderInput'
 import { clipStartTimes, type TransitionSpec } from '../timeline/timeline'
 import { pickRecorderMimeType } from '../platform/mediaFormat'
 import type { AspectRatio } from '../project/types'
@@ -21,6 +21,8 @@ export class RenderCancelled extends Error {
 export interface RenderOptions {
   clips: RenderClip[]
   transitions?: TransitionSpec[]
+  /** Musik und Voiceover */
+  tracks?: AudioTracks
   /** Teilbereich (z. B. Vorschau eines Übergangs); nur für record = false sinnvoll. */
   fromTime?: number
   toTime?: number
@@ -77,7 +79,7 @@ export function startRender(opts: RenderOptions): RenderJob {
   audio?.setSpeakers(!record)
   void audio?.resume()
   // Ton aus dekodierten Puffern (die Videos selbst sind stumm, siehe clipAudio.ts).
-  const buffers = audio ? Promise.all(clips.map((c) => getClipAudio(c.blobKey))) : null
+  const buffers = audio ? loadProjectAudio(clips, transitions, opts.tracks) : null
   const starts = clipStartTimes(clips, transitions)
   let scheduled: { stop(): void } | null = null
 
@@ -92,9 +94,9 @@ export function startRender(opts: RenderOptions): RenderJob {
   /** Ton so planen, dass er zur aktuellen Bildposition passt. */
   const startAudio = async () => {
     if (!audio || !buffers) return
-    const bufs = await buffers
+    const input = await buffers
     if (finished) return
-    scheduled = scheduleTimelineAudio(audio.ctx, audio.input, clips, bufs, transitions, {
+    scheduled = scheduleProjectAudio(audio.ctx, audio.input, input, {
       fromTime: timelineNow(),
       when: audio.ctx.currentTime,
     })
@@ -104,6 +106,7 @@ export function startRender(opts: RenderOptions): RenderJob {
     const f = frame
     if (!f) return
     const from = clips[f.fromIndex]
+    renderer.setTime(timelineNow())
     if (f.to) renderer.drawTransition(f.from, f.to, f.p, f.type, from, clips[f.fromIndex + 1])
     else renderer.drawVideo(f.from, from)
   }

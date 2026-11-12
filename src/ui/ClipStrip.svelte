@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { canvasFilter } from '../lib/renderer/looks'
   import { tick } from 'svelte'
   import { UNPLAYABLE_HINT } from '../lib/import/importFiles'
   import { store } from '../lib/project/store.svelte'
@@ -168,7 +169,7 @@
         aria-label="Clip {formatShort(clip.trimEnd - clip.trimStart)}"
       >
         {#if clip.thumbnails[0]}
-          <img src={clip.thumbnails[0]} alt="" draggable="false" />
+          <img src={clip.thumbnails[0]} alt="" draggable="false" style:filter={canvasFilter(clip.look)} />
         {/if}
         {#if clip.status === 'processing'}
           <span class="spinner" aria-label="Wird verarbeitet"></span>
@@ -176,6 +177,9 @@
           <span class="badge" title="Format nicht unterstützt">!</span>
         {:else}
           <span class="dur">{formatShort(clip.trimEnd - clip.trimStart)}</span>
+        {/if}
+        {#if (clip.volume ?? 1) === 0}
+          <span class="mute-badge" aria-label="Stumm">🔇</span>
         {/if}
       </button>
       {#if removable}
@@ -314,6 +318,17 @@
   }
   .transition:disabled {
     opacity: 0.25;
+  }
+  .mute-badge {
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    font-size: 0.7rem;
+    line-height: 1;
+    padding: 2px 3px;
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.6);
+    pointer-events: none;
   }
   .remove {
     position: absolute;
