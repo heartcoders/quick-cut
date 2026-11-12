@@ -1,0 +1,43 @@
+import { describe, expect, it } from 'vitest'
+import { coverCrop, outputSize } from './geometry'
+
+describe('outputSize', () => {
+  it.each([
+    ['9:16', 1080, 1920],
+    ['16:9', 1920, 1080],
+    ['1:1', 1080, 1080],
+  ] as const)('%s → %ix%i', (a, w, h) => expect(outputSize(a)).toEqual({ width: w, height: h }))
+})
+
+describe('coverCrop', () => {
+  it('gleiches Seitenverhältnis → kein Zuschnitt', () => {
+    const c = coverCrop(720, 1280, 1080, 1920)
+    expect(c.scale).toBeCloseTo(1.5)
+    expect(c.uvScale).toEqual([1, 1])
+    expect(c.uvOffset).toEqual([0, 0])
+  })
+  it('Querformat in 9:16 → links/rechts beschnitten, volle Höhe', () => {
+    const c = coverCrop(1920, 1080, 1080, 1920)
+    expect(c.uvScale[1]).toBeCloseTo(1)
+    expect(c.uvScale[0]).toBeCloseTo((1080 / 1920) * (1080 / 1920)) // 0.316
+    expect(c.uvOffset[0]).toBeCloseTo((1 - c.uvScale[0]) / 2)
+    expect(c.uvOffset[1]).toBeCloseTo(0)
+  })
+  it('Hochformat in 16:9 → oben/unten beschnitten', () => {
+    const c = coverCrop(1080, 1920, 1920, 1080)
+    expect(c.uvScale[0]).toBeCloseTo(1)
+    expect(c.uvScale[1]).toBeLessThan(1)
+  })
+  it('Hochformat in 1:1 → Mittelquadrat', () => {
+    const c = coverCrop(1080, 1920, 1080, 1080)
+    expect(c.uvScale).toEqual([1, 1080 / 1920])
+    expect(c.scale).toBe(1)
+  })
+  it('Rotation 90° vertauscht die Quelle', () => {
+    // Querformat-Datei mit 90° Rotation verhält sich wie Hochformat
+    expect(coverCrop(1920, 1080, 1080, 1920, 90).uvScale).toEqual([1, 1])
+  })
+  it('ungültige Größen → neutral', () => {
+    expect(coverCrop(0, 0, 1080, 1920)).toEqual({ scale: 1, uvScale: [1, 1], uvOffset: [0, 0] })
+  })
+})

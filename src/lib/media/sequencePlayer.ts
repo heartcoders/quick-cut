@@ -16,7 +16,7 @@ export interface SequenceCallbacks {
    * Welches Element (0 = A, 1 = B) sichtbar sein soll. Erster Aufruf erst,
    * wenn A einen Frame zeigt – bis dahin bleibt die bisherige Vorschau stehen.
    */
-  onSwitch?: (active: 0 | 1) => void
+  onSwitch?: (active: 0 | 1, clipIndex: number) => void
   onEnd?: () => void
 }
 
@@ -101,7 +101,7 @@ export class SequencePlayer {
     // Erst sichtbar schalten, wenn A wirklich einen Frame zeigt (sonst Schwarzbild).
     await firstFrame(this.#els[0])
     if (!alive()) return
-    this.#cb.onSwitch?.(0)
+    this.#cb.onSwitch?.(0, 0)
 
     let preparing: Promise<void> | null = clips[1] ? prepare(this.#els[1], clips[1]) : null
 
@@ -147,7 +147,7 @@ export class SequencePlayer {
       await firstFrame(nextEl)
       if (!alive()) return
       active = active === 0 ? 1 : 0
-      this.#cb.onSwitch?.(active)
+      this.#cb.onSwitch?.(active, i + 1)
 
       // Das frei gewordene Element mit dem übernächsten Clip vorladen.
       const afterNext = clips[i + 2]
