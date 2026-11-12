@@ -7,6 +7,13 @@ import { probe } from './probe'
 import { mediaQueue } from './queue'
 import { openVideo } from './video'
 
+export interface ProcessResult {
+  status: 'ready' | 'error' | 'removed'
+  duration: number
+  width: number
+  height: number
+}
+
 export interface IngestOptions {
   /** Gemessene Aufnahmedauer, falls der Browser keine Dauer liefert. */
   fallbackDuration?: number
@@ -18,7 +25,11 @@ export interface IngestOptions {
  * Blob speichern → Clip als 'processing' anhängen → Metadaten und
  * Filmstreifen seriell erzeugen → Clip auf 'ready' bzw. 'error' setzen.
  */
-export async function ingestBlob(blob: Blob, source: ClipSource, opts: IngestOptions = {}): Promise<Clip> {
+export async function ingestBlob(
+  blob: Blob,
+  source: ClipSource,
+  opts: IngestOptions = {},
+): Promise<{ clip: Clip; done: Promise<ProcessResult> }> {
   const id = newId()
   const blobKey = `blob-${id}`
   await db.putBlob(blobKey, blob)
@@ -39,8 +50,8 @@ export async function ingestBlob(blob: Blob, source: ClipSource, opts: IngestOpt
     },
     'processing',
   )
-  void mediaQueue.enqueue(() => processClip(id, blob, opts.fallbackDuration))
-  return clip
+  const done = mediaQueue.enqueue(() => processClip(id, blob, opts.fallbackDuration))
+  return { clip, done }
 }
 
 /** Setzt nach einem Reload unterbrochene Verarbeitungen fort. */
@@ -59,18 +70,21 @@ export function resumePendingClips(): void {
   }
 }
 
-async function processClip(id: string, blob: Blob, fallbackDuration?: number): Promise<void> {
-  if (!store.getClip(id)) return // inzwischen gelöscht
+const EMPTY = { duration: 0, width: 0, height: 0 }
+
+async function processClip(id: string, blob: Blob, fallbackDuration?: number): Promise<ProcessResult> {
+  if (!store.getClip(id)) return { status: 'removed', ...EMPTY } // inzwischen gelöscht
   const { loaded, ok } = await openVideo(blob)
   try {
     if (!ok) {
       store.updateClip(id, { status: 'error', playable: false })
-      return
+      return { status: 'error', ...EMPTY }
     }
     const meta = await probe(loaded.video, fallbackDuration)
+    const size = { duration: meta.duration, width: meta.width, height: meta.height }
     if (!meta.playable) {
       store.updateClip(id, { ...meta, trimEnd: meta.duration, status: 'error' })
-      return
+      return { status: 'error', ...size }
     }
 
     const frames = await makeFilmstrip(loaded.video, meta.duration)
@@ -84,7 +98,7 @@ async function processClip(id: string, blob: Blob, fallbackDuration?: number): P
     // Clip wurde während der Verarbeitung gelöscht → Thumbnails wieder entfernen.
     if (!store.getClip(id)) {
       await db.deleteClipData(`blob-${id}`, thumbKeys)
-      return
+      return { status: 'removed', ...size }
     }
     store.updateClip(id, {
       ...meta,
@@ -94,9 +108,11 @@ async function processClip(id: string, blob: Blob, fallbackDuration?: number): P
       thumbnails: frames.map((f) => URL.createObjectURL(f)),
       status: 'ready',
     })
+    return { status: 'ready', ...size }
   } catch (err) {
     console.error('Clip-Verarbeitung fehlgeschlagen', err)
-    store.updateClip(id, { status: 'error' })
+    store.updateClip(id, { status: 'error', playable: false })
+    return { status: 'error', ...EMPTY }
   } finally {
     loaded.dispose()
   }

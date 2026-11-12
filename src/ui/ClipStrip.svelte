@@ -1,7 +1,10 @@
 <script lang="ts">
   import { tick } from 'svelte'
+  import { UNPLAYABLE_HINT } from '../lib/import/importFiles'
   import { store } from '../lib/project/store.svelte'
+  import type { Clip } from '../lib/project/types'
   import { formatShort } from './format'
+  import { toasts } from './toast.svelte'
 
   let {
     selectedId = null,
@@ -11,6 +14,11 @@
 
   let scroller: HTMLDivElement | undefined = $state()
   let lastCount = 0
+
+  function select(clip: Clip) {
+    if (clip.status === 'error') toasts.show(UNPLAYABLE_HINT, 'error', 7000)
+    else if (clip.status === 'ready') onselect?.(clip.id)
+  }
 
   // Bei neuem Clip ans Ende scrollen.
   $effect(() => {
@@ -27,7 +35,7 @@
     <div class="tile" class:selected={clip.id === selectedId} class:error={clip.status === 'error'}>
       <button
         class="thumb"
-        onclick={() => onselect?.(clip.id)}
+        onclick={() => select(clip)}
         aria-label="Clip {formatShort(clip.trimEnd - clip.trimStart)}"
       >
         {#if clip.thumbnails[0]}

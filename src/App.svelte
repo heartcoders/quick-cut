@@ -7,6 +7,7 @@
   import Cut from './routes/Cut.svelte'
   import Export from './routes/Export.svelte'
   import Record from './routes/Record.svelte'
+  import Toasts from './ui/Toasts.svelte'
 
   onMount(() => {
     const stopRouter = router.start()
@@ -25,13 +26,15 @@
     }
   })
 
-  // Guard: Cut und Export brauchen mindestens einen Clip.
+  // Guard: Cut und Export brauchen mindestens einen abspielbaren Clip.
   $effect(() => {
-    if (store.loaded && router.current !== 'record' && !store.hasClips) {
+    if (store.loaded && router.current !== 'record' && !store.hasPlayableClips) {
       router.go('record', { replace: true })
     }
   })
 </script>
+
+<Toasts />
 
 {#if !store.loaded}
   <div class="loading">Lade Projekt …</div>

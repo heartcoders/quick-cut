@@ -55,8 +55,17 @@ describe('ProjectStore', () => {
   it('berechnet die Gesamtdauer aus getrimmten, abspielbaren Clips', () => {
     store.addClip(rec('a', { trimStart: 1, trimEnd: 3 }))
     store.addClip(rec('b'))
-    store.addClip(rec('c', { playable: false }))
+    store.addClip(rec('c', { playable: false }), 'error')
+    store.addClip(rec('d', { duration: 0, trimEnd: 0 }), 'processing')
     expect(store.totalDuration).toBe(6)
+    expect(store.playableClips.map((c) => c.id)).toEqual(['a', 'b'])
+    expect(store.hasPlayableClips).toBe(true)
+  })
+
+  it('hasPlayableClips ist false, solange nur verarbeitet wird', () => {
+    store.addClip(rec('a', { duration: 0, trimEnd: 0 }), 'processing')
+    expect(store.hasClips).toBe(true)
+    expect(store.hasPlayableClips).toBe(false)
   })
 
   it('löscht beim Entfernen Blob und Thumbnails und hält transitions synchron', async () => {

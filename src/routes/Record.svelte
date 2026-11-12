@@ -3,6 +3,7 @@
   import { CameraError, isStreamLive, openCamera, stopStream, type CameraErrorKind, type Facing } from '../lib/capture/camera'
   import RecordButton from '../lib/capture/RecordButton.svelte'
   import { startRecording, type ActiveRecording } from '../lib/capture/recorder'
+  import { importFiles } from '../lib/import/importFiles'
   import { ingestBlob } from '../lib/media/pipeline'
   import { pickRecorderMimeType } from '../lib/platform/mediaFormat'
   import { createDevClip } from '../lib/project/devClip'
@@ -25,6 +26,7 @@
   let videoEl: HTMLVideoElement | undefined = $state()
   let recording: ActiveRecording | null = null
   let isRecording = $state(false)
+  let fileInput: HTMLInputElement | undefined = $state()
 
   const mimeType = pickRecorderMimeType()
 
@@ -84,6 +86,13 @@
     }
   }
 
+  function onFilesChosen(e: Event) {
+    const input = e.currentTarget as HTMLInputElement
+    const files = Array.from(input.files ?? [])
+    input.value = '' // dieselbe Datei erneut wählbar
+    if (files.length) void importFiles(files)
+  }
+
   function flip() {
     facing = facing === 'user' ? 'environment' : 'user'
   }
@@ -119,11 +128,17 @@
       <ClipStrip removable={!isRecording} />
     {/if}
     <div class="controls">
-      <button class="side" disabled aria-label="Aus Galerie importieren (folgt)">▦</button>
+      <button
+        class="side"
+        disabled={isRecording}
+        onclick={() => fileInput?.click()}
+        aria-label="Aus Galerie importieren">▦</button
+      >
+      <input bind:this={fileInput} type="file" accept="video/*" multiple hidden onchange={onFilesChosen} />
       <RecordButton disabled={!stream} onstart={handleStart} onstop={handleStop} />
       <button
         class="side primary"
-        disabled={!store.hasClips || isRecording}
+        disabled={!store.hasPlayableClips || isRecording}
         onclick={() => router.go('cut')}>Weiter</button
       >
     </div>

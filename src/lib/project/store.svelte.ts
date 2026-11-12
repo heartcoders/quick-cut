@@ -35,14 +35,14 @@ class ProjectStore {
   project = $state<Project>(emptyProject())
   loaded = $state(false)
 
+  /** Clips, die in Cut und Export auftauchen: fertig verarbeitet und abspielbar. */
+  playableClips = $derived(this.project.clips.filter((c) => c.playable && c.status === 'ready'))
+
   /** Summe der getrimmten Längen aller abspielbaren Clips (ohne Übergänge). */
-  totalDuration = $derived(
-    this.project.clips
-      .filter((c) => c.playable)
-      .reduce((sum, c) => sum + (c.trimEnd - c.trimStart), 0),
-  )
+  totalDuration = $derived(this.playableClips.reduce((sum, c) => sum + (c.trimEnd - c.trimStart), 0))
 
   hasClips = $derived(this.project.clips.length > 0)
+  hasPlayableClips = $derived(this.playableClips.length > 0)
 
   #saveTimer: ReturnType<typeof setTimeout> | null = null
   #savePending: Promise<void> = Promise.resolve()
