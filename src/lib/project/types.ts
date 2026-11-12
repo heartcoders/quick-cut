@@ -81,6 +81,11 @@ export interface VoiceoverTrack {
 
 export interface ProjectRecord {
   id: string
+  /** Eigener Name; fehlt → Datum wird angezeigt. */
+  name?: string
+  /** ms seit Epoch. Fehlt bei Projekten von vor dem Startscreen. */
+  createdAt?: number
+  updatedAt?: number
   clips: ClipRecord[]
   transitions: Transition[] // Länge = clips.length - 1
   outputAspect: AspectRatio

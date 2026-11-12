@@ -30,7 +30,12 @@ export const DEFAULT_TRANSITION_SECONDS = 0.5
 const SAVE_DEBOUNCE_MS = 300
 
 function emptyProject(): Project {
-  return { id: newId(), clips: [], transitions: [], outputAspect: '9:16' }
+  const now = Date.now()
+  return { id: newId(), clips: [], transitions: [], outputAspect: '9:16', createdAt: now, updatedAt: now }
+}
+
+function isEmpty(p: Project): boolean {
+  return p.clips.length === 0 && !p.music && !p.voiceover
 }
 
 function toRecord(project: Project): ProjectRecord {
@@ -49,7 +54,9 @@ function syncTransitions(project: Project): void {
 }
 
 class ProjectStore {
+  /** Das gerade geöffnete Projekt. */
   project = $state<Project>(emptyProject())
+  /** true, sobald `project` ein geöffnetes (geladenes oder neues) Projekt ist. */
   loaded = $state(false)
 
   /** Clips, die in Cut und Export auftauchen: fertig verarbeitet und abspielbar. */
@@ -78,27 +85,114 @@ class ProjectStore {
 
   #saveTimer: ReturnType<typeof setTimeout> | null = null
   #savePending: Promise<void> = Promise.resolve()
+  /** Liegt das Projekt schon in der DB? Leere neue Projekte werden nicht gespeichert. */
+  #persisted = false
+  /** Zählt Öffnen/Schließen hoch, damit ein überholtes `open()` nichts mehr setzt. */
+  #generation = 0
 
-  /** Lädt das gespeicherte Projekt und erzeugt die Thumbnail-URLs neu. */
-  async load(): Promise<void> {
-    const rec = await db.loadProject()
-    if (rec) {
-      const clips: Clip[] = []
-      for (const c of rec.clips) {
-        const thumbnails: string[] = []
-        for (const key of c.thumbKeys) {
-          const blob = await db.getThumb(key)
-          if (blob) thumbnails.push(URL.createObjectURL(blob))
-        }
-        // duration 0 heißt: Verarbeitung lief beim Reload noch → fortsetzen
-        // (resumePendingClips in media/pipeline.ts).
-        const status: ClipStatus = !c.playable ? 'error' : c.duration > 0 ? 'ready' : 'processing'
-        clips.push({ ...c, thumbnails, status })
+  /**
+   * Öffnet ein gespeichertes Projekt und erzeugt die Thumbnail-URLs neu.
+   * `false`, wenn es das Projekt nicht (mehr) gibt.
+   */
+  async open(id: string): Promise<boolean> {
+    if (this.loaded && this.project.id === id) return true
+    this.#release()
+    const gen = this.#generation
+    const rec = await db.loadProject(id)
+    if (gen !== this.#generation) return false
+    if (!rec) return false
+    const clips: Clip[] = []
+    for (const c of rec.clips) {
+      const thumbnails: string[] = []
+      for (const key of c.thumbKeys) {
+        const blob = await db.getThumb(key)
+        if (blob) thumbnails.push(URL.createObjectURL(blob))
       }
-      this.project = { ...rec, clips }
-      syncTransitions(this.project)
+      // duration 0 heißt: Verarbeitung lief beim Reload noch → fortsetzen
+      // (resumePendingClips in media/pipeline.ts).
+      const status: ClipStatus = !c.playable ? 'error' : c.duration > 0 ? 'ready' : 'processing'
+      clips.push({ ...c, thumbnails, status })
     }
+    if (gen !== this.#generation) {
+      revokeAll(clips.flatMap((c) => c.thumbnails))
+      return false
+    }
+    this.project = { ...rec, clips }
+    syncTransitions(this.project)
+    this.#persisted = true
     this.loaded = true
+    return true
+  }
+
+  /** Neues, leeres Projekt öffnen. Gespeichert wird es erst mit dem ersten Inhalt. */
+  createNew(): string {
+    this.#release()
+    this.project = emptyProject()
+    this.#persisted = false
+    this.loaded = true
+    return this.project.id
+  }
+
+  /** Geöffnetes Projekt sichern und schließen (zurück zum Startscreen). */
+  close(): void {
+    this.#release()
+  }
+
+  /** Geöffnetes Projekt verwerfen und samt Daten löschen. */
+  async discard(): Promise<void> {
+    const id = this.project.id
+    this.#release({ save: false })
+    await this.#savePending
+    await db.deleteProject(id)
+  }
+
+  /**
+   * Sichert ausstehende Änderungen (der Snapshot entsteht synchron) und gibt
+   * Object-URLs und Audio-Puffer frei. Danach ist kein Projekt geöffnet.
+   */
+  #release({ save = true } = {}): void {
+    this.#generation++
+    if (save && this.loaded) void this.flush()
+    else if (this.#saveTimer) {
+      clearTimeout(this.#saveTimer)
+      this.#saveTimer = null
+    }
+    const p = this.project
+    for (const c of p.clips) {
+      revokeAll(c.thumbnails)
+      releaseClipUrl(c.blobKey)
+      releaseClipAudio(c.blobKey)
+    }
+    if (p.music) releaseClipAudio(p.music.blobKey)
+    if (p.voiceover) releaseClipAudio(p.voiceover.blobKey)
+    this.project = emptyProject()
+    this.#persisted = false
+    this.loaded = false
+  }
+
+  /**
+   * Clip an ein bestimmtes Projekt anhängen – auch wenn es inzwischen nicht mehr
+   * geöffnet ist (z. B. Aufnahme gespeichert, während man schon zurück ist).
+   * Dann landet der Clip als 'processing' in der DB und wird beim nächsten Öffnen
+   * fertig verarbeitet. Gibt den Laufzeit-Clip nur zurück, wenn das Projekt offen ist.
+   */
+  async addClipTo(projectId: string, record: ClipRecord, status: ClipStatus = 'ready'): Promise<Clip | null> {
+    if (this.loaded && this.project.id === projectId) return this.addClip(record, status)
+    await this.#savePending
+    const now = Date.now()
+    const rec: ProjectRecord = (await db.loadProject(projectId)) ?? {
+      id: projectId,
+      clips: [],
+      transitions: [],
+      outputAspect: '9:16',
+      createdAt: now,
+    }
+    rec.clips.push(record)
+    rec.transitions.push({ ...NO_TRANSITION })
+    rec.transitions.length = rec.clips.length - 1
+    rec.updatedAt = now
+    await db.saveProject(rec)
+    return null
   }
 
   getClip(id: string): Clip | undefined {
@@ -320,18 +414,22 @@ class ProjectStore {
       clearTimeout(this.#saveTimer)
       this.#saveTimer = null
     }
+    if (!this.#persisted && isEmpty(this.project)) return
+    this.#persisted = true
+    this.project.updatedAt = Date.now()
     const rec = toRecord(this.project)
     this.#savePending = this.#savePending.then(() => db.saveProject(rec))
     await this.#savePending
   }
 
+  /** Wartet, bis alle angestoßenen Speichervorgänge durch sind. */
+  whenSaved(): Promise<void> {
+    return this.#savePending
+  }
+
   /** Nur für Tests. */
   _reset(): void {
-    if (this.#saveTimer) clearTimeout(this.#saveTimer)
-    this.#saveTimer = null
-    for (const c of this.project.clips) revokeAll(c.thumbnails)
-    this.project = emptyProject()
-    this.loaded = false
+    this.#release({ save: false })
   }
 }
 

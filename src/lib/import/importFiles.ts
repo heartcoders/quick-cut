@@ -39,8 +39,12 @@ export function clipWarnings(meta: Pick<ProcessResult, 'duration' | 'width' | 'h
  * Importiert Dateien aus der Galerie nacheinander. Die Datei selbst (ein Blob)
  * wandert direkt in IndexedDB, ohne sie vorher komplett in den RAM zu lesen.
  */
-export async function importFiles(files: Iterable<File>): Promise<void> {
+export async function importFiles(
+  files: Iterable<File>,
+  { onFirstReady }: { onFirstReady?: () => void } = {},
+): Promise<number> {
   const pending: Promise<ProcessResult>[] = []
+  let ready = 0
   for (const file of files) {
     if (file.type && !file.type.startsWith('video/')) {
       toasts.show(`„${file.name}“ ist kein Video.`, 'warn')
@@ -58,7 +62,10 @@ export async function importFiles(files: Iterable<File>): Promise<void> {
   for (const done of pending) {
     void done.then((r) => {
       if (r.status === 'error') toasts.show(UNPLAYABLE_HINT, 'error', 7000)
-      else if (r.status === 'ready') clipWarnings(r).forEach((w) => toasts.show(w, 'warn'))
+      else if (r.status === 'ready') {
+        if (ready++ === 0) onFirstReady?.()
+        clipWarnings(r).forEach((w) => toasts.show(w, 'warn'))
+      }
     })
   }
 
@@ -66,4 +73,5 @@ export async function importFiles(files: Iterable<File>): Promise<void> {
   if (store.totalDuration > MAX_PROJECT_SECONDS) {
     toasts.show(`Projekt ist länger als ${MAX_PROJECT_SECONDS / 60} min – der Export kann lange dauern.`, 'warn')
   }
+  return ready
 }

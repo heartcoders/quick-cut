@@ -24,6 +24,8 @@
   let startY = 0
   let elapsed = $state(0)
   let raf = 0
+  /** Das Halten kam vom Startscreen (instantHold), nicht von diesem Button. */
+  let external = false
 
   const recording = $derived(machine.state !== 'idle')
 
@@ -61,12 +63,39 @@
 
   /** Von außen: Aufnahme sauber beenden (Screen verlassen etc.). */
   export function interrupt() {
+    external = false
     send({ type: 'interrupt' })
+  }
+
+  /** Finger liegt woanders (Startscreen): Halten mit dem ursprünglichen Zeitpunkt starten. */
+  export function holdFromOutside(pressedAt: number, y: number): boolean {
+    if (disabled || machine.state !== 'idle') return false
+    startY = y
+    send({ type: 'down', at: pressedAt })
+    external = recording // false, wenn onstart abgelehnt hat
+    return external
+  }
+
+  export function moveFromOutside(y: number) {
+    if (external) drag(y)
+  }
+
+  export function releaseFromOutside(at: number) {
+    if (!external) return
+    external = false
+    send({ type: 'up', at })
+  }
+
+  function drag(y: number) {
+    if (machine.state !== 'pressing' || !onzoomdrag) return
+    onzoomdrag(dragProgress(startY - y, window.innerHeight))
   }
 
   function onpointerdown(e: PointerEvent) {
     if (disabled || !e.isPrimary) return
     e.preventDefault()
+    // Loslassen vom Startscreen nicht erkannt: Tippen beendet die Aufnahme.
+    if (external) return releaseFromOutside(e.timeStamp)
     // Leichtes Verrutschen des Fingers soll nicht abbrechen.
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
     startY = e.clientY
@@ -74,17 +103,17 @@
   }
 
   function onpointermove(e: PointerEvent) {
-    if (!e.isPrimary || machine.state !== 'pressing' || !onzoomdrag) return
-    onzoomdrag(dragProgress(startY - e.clientY, window.innerHeight))
+    if (!e.isPrimary || external) return
+    drag(e.clientY)
   }
 
   function onpointerup(e: PointerEvent) {
-    if (!e.isPrimary) return
+    if (!e.isPrimary || external) return
     send({ type: 'up', at: e.timeStamp })
   }
 
   function onpointercancel(e: PointerEvent) {
-    if (!e.isPrimary) return
+    if (!e.isPrimary || external) return
     send({ type: 'cancel' })
   }
 

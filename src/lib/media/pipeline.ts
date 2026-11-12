@@ -29,11 +29,15 @@ export async function ingestBlob(
   blob: Blob,
   source: ClipSource,
   opts: IngestOptions = {},
-): Promise<{ clip: Clip; done: Promise<ProcessResult> }> {
+): Promise<{ clip: Clip | null; done: Promise<ProcessResult> }> {
+  // Ziel merken: Wechselt man während des Speicherns das Projekt, landet der
+  // Clip trotzdem im richtigen und wird dort beim nächsten Öffnen verarbeitet.
+  const projectId = store.project.id
   const id = newId()
   const blobKey = `blob-${id}`
   await db.putBlob(blobKey, blob)
-  const clip = store.addClip(
+  const clip = await store.addClipTo(
+    projectId,
     {
       id,
       blobKey,
@@ -50,7 +54,9 @@ export async function ingestBlob(
     },
     'processing',
   )
-  const done = mediaQueue.enqueue(() => processClip(id, blob, opts.fallbackDuration))
+  const done = clip
+    ? mediaQueue.enqueue(() => processClip(id, blob, opts.fallbackDuration))
+    : Promise.resolve<ProcessResult>({ status: 'removed', ...EMPTY })
   return { clip, done }
 }
 

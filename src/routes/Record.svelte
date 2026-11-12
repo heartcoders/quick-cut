@@ -23,7 +23,9 @@
     type Facing,
     type Lens,
   } from '../lib/capture/camera'
+  import { takeInstantHold } from '../lib/capture/instantHold'
   import RecordButton from '../lib/capture/RecordButton.svelte'
+  import { HOLD_THRESHOLD_MS } from '../lib/capture/recordButtonMachine'
   import { startRecording, type ActiveRecording } from '../lib/capture/recorder'
   import { importFiles } from '../lib/import/importFiles'
   import { ingestBlob } from '../lib/media/pipeline'
@@ -31,6 +33,7 @@
   import { createDevClip } from '../lib/project/devClip'
   import { store } from '../lib/project/store.svelte'
   import { router } from '../lib/router.svelte'
+  import { settings } from '../lib/settings.svelte'
   import ClipStrip from '../ui/ClipStrip.svelte'
   import { outputSize } from '../lib/renderer/geometry'
 
@@ -60,18 +63,21 @@
   }
   const LENSES: Lens[] = ['ultra', 'wide', 'tele']
 
-  // Zuletzt gewählte Kamera merken, Objektiv je Seite.
+  // Zuletzt gewählte Kamera merken, Objektiv je Seite. Die Seite beim Öffnen
+  // kommt aus den Einstellungen („Zuletzt benutzt“ = die gemerkte).
   const PREF_KEY = 'quick-cut.camera'
   function loadPref(): { facing: Facing; lenses: Record<Facing, Lens> } {
+    const want = settings.value.defaultFacing
     try {
       const p = JSON.parse(localStorage.getItem(PREF_KEY) ?? '{}')
       const pick = (f: Facing): Lens => (LENSES.includes(p.lenses?.[f]) ? p.lenses[f] : DEFAULT_LENS[f])
+      const last: Facing = p.facing === 'environment' ? 'environment' : 'user'
       return {
-        facing: p.facing === 'environment' ? 'environment' : 'user',
+        facing: want === 'last' ? last : want,
         lenses: { user: pick('user'), environment: pick('environment') },
       }
     } catch {
-      return { facing: 'user', lenses: { ...DEFAULT_LENS } }
+      return { facing: want === 'last' ? 'user' : want, lenses: { ...DEFAULT_LENS } }
     }
   }
   const pref = loadPref()
@@ -80,7 +86,9 @@
   let lensBy = $state<Record<Facing, Lens>>(pref.lenses)
   const lens = $derived(lensBy[facing])
   let cameras = $state<CameraDevice[]>([])
-  let started = $state(cameraStarted) // false → erst Hinweis zeigen, nicht sofort fragen
+  /** Vom Startscreen gedrückt gehalten: Kamera sofort öffnen und aufnehmen. */
+  let instant = takeInstantHold()
+  let started = $state(cameraStarted || !!instant) // false → erst Hinweis zeigen, nicht sofort fragen
   let stream = $state<MediaStream | null>(null)
   let cameraError = $state<CameraErrorKind | null>(null)
   let reopen = $state(0) // erhöhen → Kamera neu öffnen
@@ -88,6 +96,7 @@
   let recording: ActiveRecording | null = null
   let isRecording = $state(false)
   let fileInput: HTMLInputElement | undefined = $state()
+  let recordButton: ReturnType<typeof RecordButton> | undefined = $state()
   /** Mikrofon zwischen zwei Kameras: wird beim Wechsel weiterverwendet. */
   let spareAudio: MediaStreamTrack | null = null
   let destroyed = false
@@ -217,6 +226,22 @@
 
   $effect(() => {
     if (videoEl) videoEl.srcObject = stream
+  })
+
+  // Instant-Aufnahme: sobald die Kamera läuft, den Finger vom Startscreen übernehmen.
+  // Erst nach der Halte-Schwelle – ein kurzes Tippen öffnet nur die Kamera.
+  $effect(() => {
+    if (!instant || !stream || !recordButton) return
+    const hold = instant
+    instant = null
+    const wait = hold.pressedAt + HOLD_THRESHOLD_MS - performance.now()
+    setTimeout(() => {
+      if (hold.released || destroyed || !recordButton) return
+      if (!recordButton.holdFromOutside(hold.pressedAt, hold.startY)) return
+      hold.onMove = (y) => recordButton?.moveFromOutside(y)
+      hold.onRelease = (at) => recordButton?.releaseFromOutside(at)
+      if (hold.released) recordButton.releaseFromOutside(hold.releasedAt)
+    }, Math.max(0, wait))
   })
 
   $effect(() => {
@@ -370,6 +395,13 @@
     if (files.length) void importFiles(files)
   }
 
+  /** Zurück zum Startscreen; eine laufende Aufnahme vorher sichern. */
+  async function goHome() {
+    recordButton?.interrupt()
+    await saving
+    router.go('home')
+  }
+
   function flip() {
     facing = facing === 'user' ? 'environment' : 'user'
   }
@@ -423,11 +455,12 @@
   {/if}
 
   <header>
-    {#if import.meta.env.DEV}
-      <button class="small" onclick={addTestClip} disabled={isRecording}>+ Test</button>
-    {:else}
-      <span></span>
-    {/if}
+    <div class="left">
+      <button class="round" onclick={goHome} disabled={isRecording} aria-label="Zur Projektübersicht">‹</button>
+      {#if import.meta.env.DEV}
+        <button class="small" onclick={addTestClip} disabled={isRecording}>+ Test</button>
+      {/if}
+    </div>
     <button class="round" onclick={flip} disabled={isRecording} aria-label="Kamera wechseln">⟲</button>
   </header>
 
@@ -463,7 +496,7 @@
         aria-label="Aus Galerie importieren">▦</button
       >
       <input bind:this={fileInput} type="file" accept="video/*" multiple hidden onchange={onFilesChosen} />
-      <RecordButton disabled={!stream} onstart={handleStart} onstop={handleStop} onzoomdrag={onZoomDrag} />
+      <RecordButton bind:this={recordButton} disabled={!stream} onstart={handleStart} onstop={handleStop} onzoomdrag={onZoomDrag} />
       <button
         class="side primary"
         disabled={!store.hasPlayableClips || isRecording}
@@ -582,6 +615,11 @@
     justify-content: space-between;
     align-items: center;
     padding: 0.75rem;
+  }
+  header .left {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
   }
   footer {
     padding: 0 0.75rem 1rem;

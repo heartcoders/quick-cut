@@ -62,13 +62,14 @@ Den Unterpfad setzt die Umgebungsvariable `BASE_PATH` (im Workflow automatisch `
 BASE_PATH=/quick-cut/ npm run build
 ```
 
-Die App nutzt einen Hash-Router (`#/record`, `#/cut`, `#/export`) und läuft deshalb auf jedem statischen Hosting ohne Rewrite-Regeln.
+Die App nutzt einen Hash-Router (`#/`, `#/settings`, `#/p/<projekt>/record|cut|export`) und läuft deshalb auf jedem statischen Hosting ohne Rewrite-Regeln.
 
 ## Ablauf
 
-1. **Aufnahme** (`#/record`): Tippen nimmt bis zum nächsten Tippen auf, Halten nimmt auf, solange der Finger liegt. Der Galerie-Button importiert Videos.
-2. **Schneiden** (`#/cut`): Format wählen, Start und Ende per Griff oder ±0,1 s setzen, Ausschnitt per Ziehen verschieben, Clip oder alles abspielen. Zwischen den Clips lassen sich Übergänge wählen. Vorschau und Export laufen über denselben Renderer.
-3. **Export** (`#/export`): exportieren, dann über das Share Sheet in Fotos sichern bzw. herunterladen.
+0. **Start** (`#/`): Projektliste (öffnen, umbenennen, duplizieren, löschen). „Aus Videos“ legt ein Projekt aus der Galerie an und springt in den Schnitt. Den Record-Button halten startet sofort eine Aufnahme in einem neuen Projekt, Tippen öffnet nur die Kamera. Unter ⚙ lässt sich die Kamera beim Öffnen festlegen (vorne, hinten, zuletzt benutzt).
+1. **Aufnahme** (`#/p/<projekt>/record`): Tippen nimmt bis zum nächsten Tippen auf, Halten nimmt auf, solange der Finger liegt. Der Galerie-Button importiert Videos.
+2. **Schneiden** (`#/p/<projekt>/cut`): Format wählen, Start und Ende per Griff oder ±0,1 s setzen, Ausschnitt per Ziehen verschieben, Clip oder alles abspielen. Zwischen den Clips lassen sich Übergänge wählen. Vorschau und Export laufen über denselben Renderer.
+3. **Export** (`#/p/<projekt>/export`): exportieren, dann über das Share Sheet in Fotos sichern bzw. herunterladen.
    - **Schnell-Export (v2):** WebCodecs + Mediabunny rechnen Frame für Frame, deutlich schneller als Echtzeit.
    - **Echtzeit-Export (v1):** Canvas + MediaRecorder als Fallback.
 

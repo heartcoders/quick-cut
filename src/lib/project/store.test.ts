@@ -30,6 +30,13 @@ function rec(id: string, over: Partial<ClipRecord> = {}): ClipRecord {
   }
 }
 
+/** Speichern, Store leeren und das Projekt neu aus der DB öffnen. */
+async function reload() {
+  const id = store.project.id
+  store._reset()
+  expect(await store.open(id)).toBe(true)
+}
+
 beforeEach(async () => {
   audio.decodable = true
   audio.duration = 100
@@ -48,9 +55,10 @@ describe('ProjectStore', () => {
     store.setAspect('1:1')
     await store.flush()
 
+    const id = store.project.id
     store._reset()
     expect(store.project.clips).toHaveLength(0)
-    await store.load()
+    expect(await store.open(id)).toBe(true)
 
     expect(store.project.clips.map((c) => c.id)).toEqual(['a', 'b'])
     const a = store.getClip('a')!
@@ -97,8 +105,7 @@ describe('ProjectStore', () => {
     store.addClip(rec('b', { playable: false }), 'error')
     store.addClip(rec('c'))
     await store.flush()
-    store._reset()
-    await store.load()
+    await reload()
     expect(store.project.clips.map((c) => c.status)).toEqual(['processing', 'error', 'ready'])
   })
 })
@@ -159,8 +166,7 @@ describe('moveClip', () => {
     expect(store.project.clips.map((c) => c.id)).toEqual(['a', 'c', 'b'])
     expect(store.project.transitions[1]!.type).toBe('wipe')
     await store.flush()
-    store._reset()
-    await store.load()
+    await reload()
     expect(store.project.clips.map((c) => c.id)).toEqual(['a', 'c', 'b'])
   })
 
@@ -171,8 +177,7 @@ describe('moveClip', () => {
     store.setLook('a', { vhs: 0.5 })
     expect(store.getClip('a')!.look?.vignette).toBe(0.4)
     await store.flush()
-    store._reset()
-    await store.load()
+    await reload()
     expect(store.getClip('a')!.look).toEqual({ ...DEFAULT_LOOK, filter: 'warm', amount: 1, vignette: 0.4, vhs: 0.5 })
   })
 
@@ -191,8 +196,7 @@ describe('moveClip', () => {
   it('lädt alte Projekte ohne Look', async () => {
     store.addClip(rec('a'))
     await store.flush()
-    store._reset()
-    await store.load()
+    await reload()
     expect(store.getClip('a')!.look).toBeUndefined()
   })
 
@@ -246,13 +250,138 @@ describe('moveClip', () => {
     expect(await db.getBlob(first.blobKey)).toBeUndefined()
 
     await store.flush()
-    store._reset()
-    await store.load()
+    await reload()
     expect(store.project.voiceover).toMatchObject({ start: 0.1, volume: 0.5 })
 
     const key = store.project.voiceover!.blobKey
     await store.removeVoiceover()
     expect(store.project.voiceover).toBeUndefined()
     expect(await db.getBlob(key)).toBeUndefined()
+  })
+})
+
+describe('Mehrere Projekte', () => {
+  it('leeres neues Projekt wird nicht gespeichert, mit Clip schon', async () => {
+    const id = store.createNew()
+    await store.flush()
+    expect(await db.listProjects()).toHaveLength(0)
+
+    store.addClip(rec('a'))
+    store.close()
+    await store.whenSaved()
+    const list = await db.listProjects()
+    expect(list.map((p) => p.id)).toEqual([id])
+    expect(list[0]!.createdAt).toBeGreaterThan(0)
+    expect(store.loaded).toBe(false)
+  })
+
+  it('wechselt zwischen Projekten, Clips bleiben getrennt', async () => {
+    const a = store.createNew()
+    store.addClip(rec('a1'))
+    const b = store.createNew() // schließt a und speichert es
+    store.addClip(rec('b1'))
+    store.addClip(rec('b2'))
+    store.close()
+    await store.whenSaved()
+
+    expect(await store.open(a)).toBe(true)
+    expect(store.project.clips.map((c) => c.id)).toEqual(['a1'])
+    expect(await store.open(b)).toBe(true)
+    expect(store.project.clips.map((c) => c.id)).toEqual(['b1', 'b2'])
+    expect(await store.open('gibt-es-nicht')).toBe(false)
+    expect(store.loaded).toBe(false)
+  })
+
+  it('addClipTo hängt an ein geschlossenes Projekt in der DB an', async () => {
+    const id = store.createNew() // noch nie gespeichert
+    store.close()
+    expect(await store.addClipTo(id, rec('late', { duration: 0, trimEnd: 0 }), 'processing')).toBeNull()
+    store.addClip(rec('x')) // gehört nicht dazu
+    expect(await store.open(id)).toBe(true)
+    expect(store.project.clips.map((c) => [c.id, c.status])).toEqual([['late', 'processing']])
+  })
+
+  it('deleteProject entfernt Projekt, Videos, Thumbnails und Musik', async () => {
+    await db.putBlob('blob-a', new Blob(['x']))
+    await db.putThumb('t1', new Blob(['t']))
+    const id = store.createNew()
+    store.addClip(rec('a', { thumbKeys: ['t1'] }))
+    await store.setMusic(new File(['m'], 'song.mp3'))
+    const musicKey = store.project.music!.blobKey
+    store.close()
+    await store.whenSaved()
+
+    await db.deleteProject(id)
+    expect(await db.listProjects()).toHaveLength(0)
+    expect(await db.getBlob('blob-a')).toBeUndefined()
+    expect(await db.getBlob(musicKey)).toBeUndefined()
+    expect(await db.getThumb('t1')).toBeUndefined()
+  })
+
+  it('discard löscht das offene Projekt', async () => {
+    store.createNew()
+    store.addClip(rec('a'))
+    await store.flush()
+    await store.discard()
+    expect(await db.listProjects()).toHaveLength(0)
+  })
+
+  it('duplicateProject kopiert alle Daten unter neuen Schlüsseln', async () => {
+    await db.putBlob('blob-a', new Blob(['x']))
+    await db.putThumb('t1', new Blob(['t']))
+    const id = store.createNew()
+    store.addClip(rec('a', { thumbKeys: ['t1'] }))
+    store.setTrim('a', 1, 3)
+    store.close()
+    await store.whenSaved()
+
+    const copy = (await db.duplicateProject(id, 'Kopie'))!
+    expect(copy.id).not.toBe(id)
+    expect(copy.name).toBe('Kopie')
+    const c = copy.clips[0]!
+    expect(c.id).not.toBe('a')
+    expect(c.blobKey).not.toBe('blob-a')
+    expect(c.blobKey).toMatch(/^blob-/)
+    expect([c.trimStart, c.trimEnd]).toEqual([1, 3])
+    expect(await db.getBlob(c.blobKey)).toBeDefined()
+    expect(await db.getThumb(c.thumbKeys[0]!)).toBeDefined()
+
+    // Original löschen lässt die Kopie intakt.
+    await db.deleteProject(id)
+    expect(await db.getBlob(c.blobKey)).toBeDefined()
+    expect((await db.listProjects()).map((p) => p.id)).toEqual([copy.id])
+  })
+
+  it('renameProject setzt und entfernt den Namen', async () => {
+    const id = store.createNew()
+    store.addClip(rec('a'))
+    store.close()
+    await store.whenSaved()
+    await db.renameProject(id, '  Urlaub ')
+    expect((await db.loadProject(id))!.name).toBe('Urlaub')
+    await db.renameProject(id, ' ')
+    expect((await db.loadProject(id))!.name).toBeUndefined()
+  })
+})
+
+describe('Migration von DB-Version 1', () => {
+  it('übernimmt das einzelne Projekt unter seiner ID', async () => {
+    const { openDB } = await import('idb')
+    const v1 = await openDB('quick-cut', 1, {
+      upgrade(d) {
+        d.createObjectStore('blobs')
+        d.createObjectStore('thumbs')
+        d.createObjectStore('project')
+      },
+    })
+    await v1.put('project', { id: 'alt', clips: [rec('a')], transitions: [], outputAspect: '1:1' }, 'current')
+    v1.close()
+
+    const list = await db.listProjects()
+    expect(list.map((p) => p.id)).toEqual(['alt'])
+    expect(list[0]!.createdAt).toBeGreaterThan(0)
+    expect(await db.loadProject('current')).toBeUndefined()
+    expect(await store.open('alt')).toBe(true)
+    expect(store.project.outputAspect).toBe('1:1')
   })
 })
