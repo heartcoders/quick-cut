@@ -20,20 +20,102 @@ export function trimmedLength(c: TrimmedClip): number {
   return Math.max(0, c.trimEnd - c.trimStart)
 }
 
-/** Gesamtdauer ohne Übergänge (die kommen in Phase 6 dazu). */
-export function totalDuration(clips: readonly TrimmedClip[]): number {
-  return round2(clips.reduce((sum, c) => sum + trimmedLength(c), 0))
+export type TransitionType = 'none' | 'crossfade' | 'slide' | 'wipe'
+
+export interface TransitionSpec {
+  type: TransitionType
+  duration: number
 }
 
-/** Startzeit jedes Clips in der Gesamt-Timeline. */
-export function clipStartTimes(clips: readonly TrimmedClip[]): number[] {
+/** Ein Übergang darf höchstens halb so lang sein wie der kürzere der beiden Clips. */
+export function maxTransition(a: TrimmedClip, b: TrimmedClip): number {
+  return Math.floor((Math.min(trimmedLength(a), trimmedLength(b)) / 2) * 100) / 100
+}
+
+/** Tatsächliche Übergangsdauern (Länge n−1): 'none' → 0, sonst auf das Maximum begrenzt. */
+export function effectiveDurations(
+  clips: readonly TrimmedClip[],
+  transitions: readonly TransitionSpec[] = [],
+): number[] {
   const out: number[] = []
-  let t = 0
-  for (const c of clips) {
-    out.push(t)
-    t += trimmedLength(c)
+  for (let i = 0; i < clips.length - 1; i++) {
+    const tr = transitions[i]
+    if (!tr || tr.type === 'none' || tr.duration <= 0) out.push(0)
+    else out.push(Math.min(tr.duration, maxTransition(clips[i]!, clips[i + 1]!)))
   }
   return out
+}
+
+/** Summe der getrimmten Längen minus Summe der Übergangsdauern. */
+export function totalDuration(
+  clips: readonly TrimmedClip[],
+  transitions: readonly TransitionSpec[] = [],
+): number {
+  const sum = clips.reduce((s, c) => s + trimmedLength(c), 0)
+  const overlap = effectiveDurations(clips, transitions).reduce((s, d) => s + d, 0)
+  return round2(sum - overlap)
+}
+
+/** Startzeit jedes Clips in der Gesamt-Timeline (Übergänge überlappen). */
+export function clipStartTimes(
+  clips: readonly TrimmedClip[],
+  transitions: readonly TransitionSpec[] = [],
+): number[] {
+  const d = effectiveDurations(clips, transitions)
+  const out: number[] = []
+  let t = 0
+  for (const [i, c] of clips.entries()) {
+    out.push(t)
+    t += trimmedLength(c) - (d[i] ?? 0)
+  }
+  return out
+}
+
+export interface FrameAt {
+  from: { index: number; localTime: number }
+  /** Nur während eines Übergangs gesetzt. */
+  to?: { index: number; localTime: number }
+  /** Fortschritt des Übergangs 0…1 (0 ohne Übergang). */
+  p: number
+  type: TransitionType
+}
+
+/**
+ * Was ist zur Gesamtzeit t zu sehen? Liegt t in einem Übergang,
+ * sind zwei Clips aktiv plus Fortschritt p.
+ */
+export function resolveFrame(
+  clips: readonly TrimmedClip[],
+  transitions: readonly TransitionSpec[],
+  t: number,
+): FrameAt | null {
+  if (clips.length === 0 || t < 0) return null
+  const d = effectiveDurations(clips, transitions)
+  const starts = clipStartTimes(clips, transitions)
+  for (const [i, c] of clips.entries()) {
+    const start = starts[i]!
+    const end = start + trimmedLength(c)
+    if (t >= end) continue
+    const from = { index: i, localTime: c.trimStart + (t - start) }
+    const di = d[i] ?? 0
+    if (di > 0 && t >= end - di) {
+      const next = clips[i + 1]!
+      const p = clamp((t - (end - di)) / di, 0, 1)
+      return {
+        from,
+        to: { index: i + 1, localTime: next.trimStart + (t - starts[i + 1]!) },
+        p,
+        type: transitions[i]!.type,
+      }
+    }
+    return { from, p: 0, type: 'none' }
+  }
+  const total = totalDuration(clips, transitions)
+  if (t <= total + 1e-9) {
+    const index = clips.length - 1
+    return { from: { index, localTime: clips[index]!.trimEnd }, p: 0, type: 'none' }
+  }
+  return null
 }
 
 /**

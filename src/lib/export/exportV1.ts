@@ -1,4 +1,5 @@
-import { SequencePlayer } from '../media/sequencePlayer'
+import { SequencePlayer, type FrameState } from '../media/sequencePlayer'
+import type { TransitionSpec } from '../timeline/timeline'
 import { pickRecorderMimeType } from '../platform/mediaFormat'
 import type { AspectRatio } from '../project/types'
 import { EXPORT_FPS } from '../renderer/geometry'
@@ -17,6 +18,10 @@ export class RenderCancelled extends Error {
 
 export interface RenderOptions {
   clips: RenderClip[]
+  transitions?: TransitionSpec[]
+  /** Teilbereich (z. B. Vorschau eines Übergangs); nur für record = false sinnvoll. */
+  fromTime?: number
+  toTime?: number
   aspect: AspectRatio
   renderer: Renderer
   videos: [HTMLVideoElement, HTMLVideoElement]
@@ -47,12 +52,13 @@ export function startRender(opts: RenderOptions): RenderJob {
   renderer.setOutput(opts.aspect)
   renderer.clear()
 
-  let active: { el: HTMLVideoElement; rotation: number } | null = null
+  let frame: FrameState | null = null
   let recorder: MediaRecorder | null = null
   let canvasTrack: MediaStreamTrack | null = null
   let finished = false
   let raf = 0
   const chunks: Blob[] = []
+  const transitions = opts.transitions ?? []
 
   let resolveDone!: (r: RenderResult | null) => void
   let rejectDone!: (e: unknown) => void
@@ -62,11 +68,31 @@ export function startRender(opts: RenderOptions): RenderJob {
   })
 
   audio?.setSpeakers(!record)
-  if (audio) for (const v of videos) audio.attach(v)
+  const gains = audio ? videos.map((v) => audio.attach(v)) : []
   void audio?.resume()
 
+  /** Equal-Power-Überblendung: Lautheit bleibt während des Übergangs konstant. */
+  const applyGains = (f: FrameState) => {
+    if (!audio) return
+    for (const [i, v] of videos.entries()) {
+      const g = gains[i]!
+      let value = 0
+      if (v === f.from) value = f.to ? Math.cos((f.p * Math.PI) / 2) : 1
+      else if (v === f.to) value = Math.sin((f.p * Math.PI) / 2)
+      g.gain.value = value
+    }
+  }
+
+  const drawCurrent = () => {
+    const f = frame
+    if (!f) return
+    const rotFrom = clips[f.fromIndex]?.rotation ?? 0
+    if (f.to) renderer.drawTransition(f.from, f.to, f.p, f.type, rotFrom, clips[f.fromIndex + 1]?.rotation ?? 0)
+    else renderer.drawVideo(f.from, rotFrom)
+  }
+
   const draw = () => {
-    if (active) renderer.drawVideo(active.el, active.rotation)
+    drawCurrent()
     if (!finished) raf = requestAnimationFrame(draw)
   }
 
@@ -92,6 +118,7 @@ export function startRender(opts: RenderOptions): RenderJob {
     clearTimeout(firstFrameTimer)
     player.stop()
     canvasTrack?.stop() // nur den Canvas-Track; der Audio-Track gehört dem Graph
+    for (const g of gains) g.gain.value = 1
     audio?.setSpeakers(true)
   }
 
@@ -107,7 +134,7 @@ export function startRender(opts: RenderOptions): RenderJob {
 
   const finish = () => {
     if (finished) return
-    if (active) renderer.drawVideo(active.el, active.rotation)
+    drawCurrent()
     cleanup()
     if (!recorder) return resolveDone(null)
     const rec = recorder as MediaRecorder
@@ -119,12 +146,18 @@ export function startRender(opts: RenderOptions): RenderJob {
   }
 
   const player = new SequencePlayer(videos[0], videos[1], {
-    onTime: (t) => opts.onProgress?.(t),
-    onSwitch: (i, clipIndex) => {
-      active = { el: videos[i], rotation: clips[clipIndex]?.rotation ?? 0 }
+    onTime: (t) => {
+      opts.onProgress?.(t)
+      if (opts.toTime !== undefined && t >= opts.toTime) finish()
+    },
+    onFrame: (f) => {
+      frame = f
+      applyGains(f)
+    },
+    onReady: () => {
+      clearTimeout(firstFrameTimer)
       if (record && !recorder) {
-        clearTimeout(firstFrameTimer)
-        renderer.drawVideo(active.el, active.rotation)
+        drawCurrent()
         try {
           beginRecording()
         } catch (err) {
@@ -136,11 +169,11 @@ export function startRender(opts: RenderOptions): RenderJob {
   })
 
   const firstFrameTimer = setTimeout(
-    () => !active && fail(new Error('Video startet nicht (Timeout).')),
+    () => !frame && fail(new Error('Video startet nicht (Timeout).')),
     FIRST_FRAME_TIMEOUT_MS,
   )
 
-  player.start(clips)
+  player.start(clips, transitions, opts.fromTime ?? 0)
   raf = requestAnimationFrame(draw)
 
   return {

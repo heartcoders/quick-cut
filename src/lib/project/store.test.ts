@@ -92,3 +92,49 @@ describe('ProjectStore', () => {
     expect(store.project.clips.map((c) => c.status)).toEqual(['processing', 'error', 'ready'])
   })
 })
+
+describe('Übergänge im Store', () => {
+  it('setTransition begrenzt auf die halbe Länge des kürzeren Clips und setzt Standarddauer', () => {
+    store.addClip(rec('a')) // 4 s
+    store.addClip(rec('b', { duration: 2, trimEnd: 2 }))
+    store.setTransition(0, { type: 'crossfade' })
+    expect(store.project.transitions[0]).toEqual({ type: 'crossfade', duration: 0.5 })
+    store.setTransition(0, { duration: 5 })
+    expect(store.project.transitions[0]!.duration).toBe(1)
+  })
+
+  it('Gesamtdauer zieht Übergänge ab', () => {
+    store.addClip(rec('a'))
+    store.addClip(rec('b'))
+    store.addClip(rec('c'))
+    store.setAllTransitions({ type: 'wipe', duration: 0.8 })
+    expect(store.totalDuration).toBe(12 - 1.6)
+  })
+
+  it('Trim kürzer als 2× Übergang → Übergang zählt nur bis zum Maximum', () => {
+    store.addClip(rec('a'))
+    store.addClip(rec('b'))
+    store.setTransition(0, { type: 'crossfade', duration: 1.5 })
+    store.setTrim('b', 0, 1) // max jetzt 0,5
+    expect(store.totalDuration).toBe(5 - 0.5)
+  })
+
+  it('removeClip in der Mitte entfernt den passenden Übergang', () => {
+    store.addClip(rec('a'))
+    store.addClip(rec('b'))
+    store.addClip(rec('c'))
+    store.setTransition(0, { type: 'crossfade', duration: 0.5 }) // a→b
+    store.setTransition(1, { type: 'wipe', duration: 0.7 }) // b→c
+    void store.removeClip('b')
+    expect(store.project.transitions).toEqual([{ type: 'crossfade', duration: 0.5 }])
+  })
+
+  it('nicht abspielbare Clips dazwischen werden übersprungen', () => {
+    store.addClip(rec('a'))
+    store.addClip(rec('x', { playable: false }), 'error')
+    store.addClip(rec('b'))
+    store.setTransition(0, { type: 'crossfade', duration: 0.5 })
+    expect(store.playableTransitions).toEqual([{ type: 'crossfade', duration: 0.5 }])
+    expect(store.totalDuration).toBe(7.5)
+  })
+})

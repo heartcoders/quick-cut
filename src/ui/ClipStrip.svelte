@@ -10,7 +10,19 @@
     selectedId = null,
     onselect,
     removable = true,
-  }: { selectedId?: string | null; onselect?: (id: string) => void; removable?: boolean } = $props()
+    ontransition,
+    activeTransition = null,
+  }: {
+    selectedId?: string | null
+    onselect?: (id: string) => void
+    removable?: boolean
+    /** Gesetzt → zwischen den Clips erscheinen Übergangs-Knöpfe. */
+    ontransition?: (index: number) => void
+    activeTransition?: number | null
+  } = $props()
+
+  const ICONS: Record<string, string> = { none: '│', crossfade: '◐', slide: '⇤', wipe: '▧' }
+  const LABELS: Record<string, string> = { none: 'kein Übergang', crossfade: 'Überblenden', slide: 'Schieben', wipe: 'Wischen' }
 
   let scroller: HTMLDivElement | undefined = $state()
   let lastCount = 0
@@ -31,7 +43,7 @@
 </script>
 
 <div class="strip" bind:this={scroller}>
-  {#each store.project.clips as clip (clip.id)}
+  {#each store.project.clips as clip, i (clip.id)}
     <div class="tile" class:selected={clip.id === selectedId} class:error={clip.status === 'error'}>
       <button
         class="thumb"
@@ -53,6 +65,19 @@
         <button class="remove" onclick={() => store.removeClip(clip.id)} aria-label="Clip löschen">✕</button>
       {/if}
     </div>
+    {#if ontransition && i < store.project.clips.length - 1}
+      {@const tr = store.project.transitions[i]}
+      <button
+        class="transition"
+        class:set={tr && tr.type !== 'none'}
+        class:active={activeTransition === i}
+        disabled={store.maxTransitionAt(i) <= 0}
+        onclick={() => ontransition(i)}
+        aria-label="Übergang {i + 1}: {LABELS[tr?.type ?? 'none']}"
+      >
+        {ICONS[tr?.type ?? 'none']}
+      </button>
+    {/if}
   {/each}
 </div>
 
@@ -131,6 +156,28 @@
     to {
       transform: rotate(360deg);
     }
+  }
+  .transition {
+    flex: 0 0 auto;
+    align-self: center;
+    width: 26px;
+    height: 44px;
+    min-height: 0;
+    padding: 0;
+    margin: 0 -2px;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    background: rgba(40, 40, 40, 0.9);
+    color: var(--muted);
+  }
+  .transition.set {
+    color: var(--accent);
+  }
+  .transition.active {
+    outline: 2px solid var(--accent);
+  }
+  .transition:disabled {
+    opacity: 0.25;
   }
   .remove {
     position: absolute;

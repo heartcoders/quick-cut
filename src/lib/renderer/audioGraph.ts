@@ -10,6 +10,16 @@ export class AudioGraph {
   #dest: MediaStreamAudioDestinationNode
   #gains = new WeakMap<HTMLMediaElement, GainNode>()
 
+  /** Erzeugt den Graph oder liefert null (dann ohne Ton). Im Tap aufrufen. */
+  static tryCreate(): AudioGraph | null {
+    try {
+      return new AudioGraph()
+    } catch (err) {
+      console.warn('Web Audio nicht verfügbar', err)
+      return null
+    }
+  }
+
   /** Im Tap erzeugen – iOS startet den Context sonst im Zustand „suspended“. */
   constructor() {
     this.ctx = new AudioContext()

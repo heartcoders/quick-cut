@@ -1,15 +1,20 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import { startRender, type RenderJob } from '../lib/export/exportV1'
+  import { buildRenderClips, plainTransitions } from '../lib/export/renderInput'
   import { getClipUrl } from '../lib/media/clipUrls'
   import { playRange } from '../lib/media/rangePlayer'
   import { createSeeker, type Seeker } from '../lib/media/seeker'
-  import { SequencePlayer } from '../lib/media/sequencePlayer'
   import { store } from '../lib/project/store.svelte'
+  import { AudioGraph } from '../lib/renderer/audioGraph'
+  import { createRenderer } from '../lib/renderer/createRenderer'
+  import type { RenderClip, Renderer } from '../lib/renderer/types'
   import { router } from '../lib/router.svelte'
-  import type { Handle } from '../lib/timeline/timeline'
+  import { clipStartTimes, effectiveDurations, type Handle } from '../lib/timeline/timeline'
   import ClipStrip from '../ui/ClipStrip.svelte'
   import { formatPrecise } from '../ui/format'
   import Screen from '../ui/Screen.svelte'
+  import TransitionSheet from '../ui/TransitionSheet.svelte'
   import TrimEditor from '../ui/TrimEditor.svelte'
 
   type Mode = 'idle' | 'clip' | 'all'
@@ -18,14 +23,20 @@
   let mode = $state<Mode>('idle')
   let playhead = $state(0) // lokale Zeit im gewählten Clip
   let allTime = $state(0) // Gesamtzeit bei „Alles abspielen“
-  let activeAB = $state<0 | 1 | null>(null) // null: A/B noch nicht bereit
+  let canvasReady = $state(false) // erster Frame im Canvas → Einzelvorschau ausblenden
   let urls = $state<Record<string, string>>({})
+  let renderClips = $state<RenderClip[]>([])
+  let sheetIndex = $state<number | null>(null)
+  let previewingTransition = $state(false)
 
   let single: HTMLVideoElement | undefined = $state()
   let videoA: HTMLVideoElement | undefined = $state()
   let videoB: HTMLVideoElement | undefined = $state()
+  let stage: HTMLDivElement | undefined = $state()
   let seeker: Seeker | null = null
-  let sequence: SequencePlayer | null = null
+  let renderer: Renderer | null = null
+  let audio: AudioGraph | null = null
+  let job: RenderJob | null = null
   let stopRange: (() => void) | null = null
 
   const clips = $derived(store.playableClips)
@@ -40,6 +51,15 @@
         if (u) urls[c.blobKey] = u
       })
     }
+  })
+
+  // Renderer-Eingaben aktuell halten (Trim, Reihenfolge, URLs).
+  $effect(() => {
+    let cancelled = false
+    void buildRenderClips(clips).then((r) => {
+      if (!cancelled) renderClips = r
+    })
+    return () => (cancelled = true)
   })
 
   // Clipwechsel: Wiedergabe stoppen, Playhead an den Anfang.
@@ -62,28 +82,67 @@
 
   onMount(() => {
     if (single) seeker = createSeeker(single)
-    if (videoA && videoB) {
-      sequence = new SequencePlayer(videoA, videoB, {
-        onTime: (t) => (allTime = t),
-        onSwitch: (a) => (activeAB = a),
-        onEnd: () => {
-          mode = 'idle'
-          activeAB = null
-        },
-      })
+    try {
+      renderer = createRenderer()
+      renderer.canvas.classList.add('stage-canvas')
+      stage?.append(renderer.canvas)
+    } catch (err) {
+      console.error('Renderer nicht verfügbar', err)
     }
     return () => {
       stopAll()
       seeker?.dispose()
+      renderer?.dispose()
+      audio?.close()
     }
   })
 
   function stopAll() {
     stopRange?.()
     stopRange = null
-    sequence?.stop()
-    activeAB = null
+    job?.cancel()
+    job = null
+    canvasReady = false
+    previewingTransition = false
     mode = 'idle'
+  }
+
+  /**
+   * Wiedergabe über den Renderer – dieselbe Pipeline wie der Export, damit
+   * Übergänge in der Vorschau exakt so aussehen wie im fertigen Video.
+   * Muss synchron im Tap laufen (iOS).
+   */
+  function playRendered(range?: { from: number; to: number }) {
+    if (!renderer || !videoA || !videoB || renderClips.length === 0) return false
+    audio ??= AudioGraph.tryCreate()
+    allTime = range?.from ?? 0
+    mode = 'all'
+    const j = startRender({
+      clips: renderClips,
+      transitions: plainTransitions(store.playableTransitions),
+      aspect: store.project.outputAspect,
+      renderer,
+      videos: [videoA, videoB],
+      audio,
+      record: false,
+      fromTime: range?.from,
+      toTime: range?.to,
+      onProgress: (t) => {
+        allTime = t
+        canvasReady = true
+      },
+    })
+    job = j
+    j.done
+      .catch(() => {})
+      .finally(() => {
+        if (job !== j) return
+        job = null
+        mode = 'idle'
+        canvasReady = false
+        previewingTransition = false
+      })
+    return true
   }
 
   function select(id: string) {
@@ -132,11 +191,27 @@
   function toggleAll() {
     if (mode === 'all') return stopAll()
     stopAll()
-    const seq = clips.map((c) => ({ ...c, url: urls[c.blobKey] ?? '' })).filter((c) => c.url)
-    if (!sequence || seq.length === 0) return
-    allTime = 0
-    mode = 'all'
-    sequence.start(seq)
+    playRendered()
+  }
+
+  function openTransition(index: number) {
+    stopAll()
+    sheetIndex = index
+  }
+
+  /** Spielt den Übergang mit je 1 s davor und danach. */
+  function previewTransition() {
+    if (previewingTransition) return stopAll()
+    if (sheetIndex === null) return
+    stopAll()
+    const a = store.project.clips[sheetIndex]
+    const k = a ? clips.indexOf(a) : -1
+    if (k < 0 || k >= clips.length - 1) return
+    const transitions = plainTransitions(store.playableTransitions)
+    const starts = clipStartTimes(clips, transitions)
+    const d = effectiveDurations(clips, transitions)[k] ?? 0
+    const tStart = starts[k + 1]!
+    if (playRendered({ from: Math.max(0, tStart - 1), to: tStart + d + 1 })) previewingTransition = true
   }
 
   const timeLabel = $derived(
@@ -156,14 +231,15 @@
   <div class="cut">
     <div class="preview">
       <!-- svelte-ignore a11y_media_has_caption -->
-      <video bind:this={single} src={clipUrl} playsinline preload="auto" class:hidden={mode === 'all' && activeAB !== null}></video>
-      <!-- svelte-ignore a11y_media_has_caption -->
-      <video bind:this={videoA} playsinline preload="auto" class="ab" class:hidden={mode !== 'all' || activeAB !== 0}
+      <video bind:this={single} src={clipUrl} playsinline preload="auto" class:hidden={mode === 'all' && canvasReady}
       ></video>
-      <!-- svelte-ignore a11y_media_has_caption -->
-      <video bind:this={videoB} playsinline preload="auto" class="ab" class:hidden={mode !== 'all' || activeAB !== 1}
-      ></video>
+      <div class="stage" class:hidden={mode !== 'all' || !canvasReady} bind:this={stage}></div>
     </div>
+    <!-- Quellen für den Renderer: eingehängt, aber unsichtbar (iOS dekodiert sonst nicht). -->
+    <!-- svelte-ignore a11y_media_has_caption -->
+    <video bind:this={videoA} class="source" playsinline preload="auto"></video>
+    <!-- svelte-ignore a11y_media_has_caption -->
+    <video bind:this={videoB} class="source" playsinline preload="auto"></video>
 
     <div class="controls">
       <button class="play" onclick={togglePlay} aria-label={mode === 'clip' ? 'Pause' : 'Clip abspielen'}>
@@ -192,9 +268,26 @@
       {/key}
     {/if}
 
-    <ClipStrip selectedId={clip?.id ?? null} onselect={select} />
+    <ClipStrip
+      selectedId={clip?.id ?? null}
+      onselect={select}
+      ontransition={openTransition}
+      activeTransition={sheetIndex}
+    />
   </div>
 </Screen>
+
+{#if sheetIndex !== null}
+  <TransitionSheet
+    index={sheetIndex}
+    previewing={previewingTransition}
+    onpreview={previewTransition}
+    onclose={() => {
+      stopAll()
+      sheetIndex = null
+    }}
+  />
+{/if}
 
 <style>
   .cut {
@@ -220,6 +313,24 @@
   }
   /* opacity statt display:none: iOS dekodiert versteckte Videos sonst nicht vor */
   .hidden {
+    opacity: 0;
+    pointer-events: none;
+  }
+  .stage {
+    position: absolute;
+    inset: 0;
+  }
+  .stage :global(.stage-canvas) {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+  .source {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 1px;
+    height: 1px;
     opacity: 0;
     pointer-events: none;
   }

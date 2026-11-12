@@ -17,7 +17,7 @@ npm run build
 ## Ablauf
 
 1. **Aufnahme** (`#/record`): Tippen = Aufnahme bis zum nächsten Tippen, Halten = solange der Finger liegt. Galerie-Button importiert Videos.
-2. **Schneiden** (`#/cut`): Start/Ende per Griff oder ±0,1 s, Clip oder alles abspielen.
+2. **Schneiden** (`#/cut`): Start/Ende per Griff oder ±0,1 s, Clip oder alles abspielen. Zwischen den Clips Übergänge (Überblenden, Schieben, Wischen) wählen – Vorschau und Export laufen über denselben Renderer.
 3. **Export** (`#/export`): Format 9:16 / 1:1 / 16:9 wählen, in Echtzeit exportieren (Canvas + MediaRecorder), dann über das Share Sheet in Fotos sichern bzw. herunterladen.
 
 ## Struktur

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { RenderCancelled, startRender, type RenderJob } from '../lib/export/exportV1'
-  import { getClipUrl } from '../lib/media/clipUrls'
+  import { buildRenderClips, plainTransitions } from '../lib/export/renderInput'
   import { canShareFile, isIOS, saveVideo, toFile } from '../lib/platform/save'
   import { acquireWakeLock } from '../lib/platform/wakeLock'
   import { store } from '../lib/project/store.svelte'
@@ -22,6 +22,7 @@
   let errorText = $state('')
   let result = $state<{ file: File; url: string; canShare: boolean } | null>(null)
   let renderClips = $state<RenderClip[] | null>(null)
+  const transitions = $derived(plainTransitions(store.playableTransitions))
 
   let stage: HTMLDivElement | undefined = $state()
   let videoA: HTMLVideoElement | undefined = $state()
@@ -37,13 +38,9 @@
 
   // Clip-URLs auflösen; bei Trim-Änderung neu zusammenstellen.
   $effect(() => {
-    const clips = store.playableClips.map((c) => ({ ...c }))
     let cancelled = false
-    void Promise.all(clips.map((c) => getClipUrl(c))).then((urls) => {
-      if (cancelled) return
-      renderClips = clips.flatMap((c, i) =>
-        urls[i] ? [{ url: urls[i]!, duration: c.duration, trimStart: c.trimStart, trimEnd: c.trimEnd, rotation: c.rotation }] : [],
-      )
+    void buildRenderClips(store.playableClips).then((r) => {
+      if (!cancelled) renderClips = r
     })
     return () => (cancelled = true)
   })
@@ -52,8 +49,9 @@
   $effect(() => {
     const clips = renderClips
     const a = aspect
+    const tr = transitions
     if (!renderer || !clips || busy) return
-    void renderer.load({ clips, outputAspect: a }).then(() => renderer?.renderFrame(0))
+    void renderer.load({ clips, transitions: tr, outputAspect: a }).then(() => renderer?.renderFrame(0))
   })
 
   onMount(() => {
@@ -84,12 +82,8 @@
 
   function ensureAudio(): AudioGraph | null {
     if (audio) return audio
-    try {
-      audio = new AudioGraph()
-    } catch (err) {
-      console.warn('Web Audio nicht verfügbar – Export ohne Ton', err)
-      toasts.show('Ton kann in diesem Browser nicht exportiert werden.', 'warn')
-    }
+    audio = AudioGraph.tryCreate()
+    if (!audio) toasts.show('Ton kann in diesem Browser nicht exportiert werden.', 'warn')
     return audio
   }
 
@@ -101,6 +95,7 @@
     // Alles bis hier synchron im Tap (iOS: AudioContext + play()).
     job = startRender({
       clips: renderClips,
+      transitions,
       aspect,
       renderer,
       videos: [videoA, videoB],
@@ -184,7 +179,10 @@
         <div class="actions"><button onclick={() => job?.cancel()}>Abbrechen</button></div>
       {:else}
         <AspectPicker value={aspect} onchange={setAspect} disabled={busy} />
-        <p class="meta">{store.playableClips.length} Clips · {formatPrecise(total)} · {aspect} · 1080p</p>
+        <p class="meta">
+          {store.playableClips.length} Clips · {transitions.filter((t) => t.type !== 'none').length} Übergänge ·
+          {formatPrecise(total)} · {aspect} · 1080p
+        </p>
         {#if phase === 'error'}
           <p class="error">{errorText}</p>
         {/if}

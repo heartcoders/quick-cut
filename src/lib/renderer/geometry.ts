@@ -42,3 +42,8 @@ export function coverCrop(
   const sy = dstH / scale / eh
   return { scale, uvScale: [sx, sy], uvOffset: [(1 - sx) / 2, (1 - sy) / 2] }
 }
+
+/** Smoothstep-Easing – identisch zum Slide-Shader. */
+export function easeInOut(p: number): number {
+  return p * p * (3 - 2 * p)
+}

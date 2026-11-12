@@ -1,4 +1,5 @@
 import type { AspectRatio } from '../project/types'
+import type { TransitionSpec, TransitionType } from '../timeline/timeline'
 
 export interface RenderClip {
   url: string
@@ -10,6 +11,8 @@ export interface RenderClip {
 
 export interface RenderProject {
   clips: RenderClip[]
+  /** Länge clips.length − 1 */
+  transitions: TransitionSpec[]
   outputAspect: AspectRatio
 }
 
@@ -28,6 +31,15 @@ export interface Renderer {
   setOutput(aspect: AspectRatio): void
   /** Zeichnet den aktuellen Frame eines spielenden Videos (Echtzeit-Pfad). */
   drawVideo(video: HTMLVideoElement, rotation?: number): void
+  /** Übergang zwischen zwei spielenden Videos, p = 0…1. */
+  drawTransition(
+    from: HTMLVideoElement,
+    to: HTMLVideoElement,
+    p: number,
+    type: TransitionType,
+    rotFrom?: number,
+    rotTo?: number,
+  ): void
   clear(): void
   dispose(): void
 }

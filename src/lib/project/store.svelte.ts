@@ -1,5 +1,5 @@
 import { releaseClipUrl } from '../media/clipUrls'
-import { totalDuration } from '../timeline/timeline'
+import { maxTransition, totalDuration } from '../timeline/timeline'
 import * as db from './db'
 import { newId } from './id'
 import {
@@ -10,7 +10,11 @@ import {
   type ClipStatus,
   type Project,
   type ProjectRecord,
+  type Transition,
 } from './types'
+
+/** Standarddauer beim Aktivieren eines Übergangs. */
+export const DEFAULT_TRANSITION_SECONDS = 0.5
 
 const SAVE_DEBOUNCE_MS = 300
 
@@ -40,8 +44,23 @@ class ProjectStore {
   /** Clips, die in Cut und Export auftauchen: fertig verarbeitet und abspielbar. */
   playableClips = $derived(this.project.clips.filter((c) => c.playable && c.status === 'ready'))
 
-  /** Summe der getrimmten Längen aller abspielbaren Clips (ohne Übergänge). */
-  totalDuration = $derived(totalDuration(this.playableClips))
+  /**
+   * Übergänge zwischen aufeinanderfolgenden abspielbaren Clips. Gilt jeweils
+   * der Übergang *nach* dem vorderen Clip (nicht abspielbare Clips dazwischen
+   * werden übersprungen).
+   */
+  playableTransitions = $derived.by(() => {
+    const out: Transition[] = []
+    const play = this.playableClips
+    for (let i = 0; i < play.length - 1; i++) {
+      const idx = this.project.clips.indexOf(play[i]!)
+      out.push(this.project.transitions[idx] ?? { ...NO_TRANSITION })
+    }
+    return out
+  })
+
+  /** Summe der getrimmten Längen minus Übergänge (Formel aus dem Handover). */
+  totalDuration = $derived(totalDuration(this.playableClips, this.playableTransitions))
 
   hasClips = $derived(this.project.clips.length > 0)
   hasPlayableClips = $derived(this.playableClips.length > 0)
@@ -95,6 +114,33 @@ class ProjectStore {
     this.updateClip(id, { trimStart, trimEnd })
   }
 
+  /**
+   * Größtmögliche Dauer für den Übergang nach Clip `index` (Projekt-Index):
+   * bezogen auf den nächsten *abspielbaren* Clip. 0, wenn es keinen gibt.
+   */
+  maxTransitionAt(index: number): number {
+    const a = this.project.clips[index]
+    if (!a || !this.playableClips.includes(a)) return 0
+    const b = this.project.clips.slice(index + 1).find((c) => this.playableClips.includes(c))
+    return b ? maxTransition(a, b) : 0
+  }
+
+  setTransition(index: number, patch: Partial<Transition>): void {
+    const tr = this.project.transitions[index]
+    if (!tr) return
+    const next = { ...tr, ...patch }
+    if (next.type !== 'none' && next.duration <= 0) next.duration = DEFAULT_TRANSITION_SECONDS
+    const max = this.maxTransitionAt(index)
+    next.duration = Math.round(Math.min(next.duration, max) * 100) / 100
+    Object.assign(tr, next)
+    this.scheduleSave()
+  }
+
+  /** „Für alle übernehmen“: gleicher Typ und gleiche Wunschdauer, je Paar begrenzt. */
+  setAllTransitions(t: Transition): void {
+    for (let i = 0; i < this.project.transitions.length; i++) this.setTransition(i, t)
+  }
+
   setAspect(aspect: AspectRatio): void {
     this.project.outputAspect = aspect
     this.scheduleSave()
@@ -104,6 +150,10 @@ class ProjectStore {
     const idx = this.project.clips.findIndex((c) => c.id === id)
     if (idx < 0) return
     const [clip] = this.project.clips.splice(idx, 1)
+    // Den Übergang *nach* dem Clip entfernen (beim letzten Clip den davor).
+    if (this.project.transitions.length > 0) {
+      this.project.transitions.splice(Math.min(idx, this.project.transitions.length - 1), 1)
+    }
     syncTransitions(this.project)
     revokeAll(clip!.thumbnails)
     releaseClipUrl(clip!.blobKey)
