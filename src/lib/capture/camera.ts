@@ -15,6 +15,8 @@ export interface CameraRequest {
   facing: Facing
   /** Bestimmtes Objektiv; fehlt oder ist veraltet → Standardkamera der Seite. */
   deviceId?: string
+  /** Laufendes Mikrofon weiterverwenden (Kamerawechsel ohne Mikrofon-Neustart). */
+  audio?: MediaStreamTrack
 }
 
 /**
@@ -38,6 +40,10 @@ function classify(err: unknown): CameraErrorKind {
 
 async function request(req: CameraRequest): Promise<MediaStream> {
   const video = videoConstraints(req)
+  if (req.audio?.readyState === 'live') {
+    const s = await navigator.mediaDevices.getUserMedia({ video, audio: false })
+    return new MediaStream([...s.getVideoTracks(), req.audio])
+  }
   try {
     return await navigator.mediaDevices.getUserMedia({ video, audio: true })
   } catch (err) {
@@ -54,6 +60,8 @@ export async function openCamera(req: CameraRequest): Promise<MediaStream> {
   if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
     throw new CameraError('insecure')
   }
+  // Nur ein noch laufendes Mikrofon übernehmen.
+  req = { ...req, audio: req.audio?.readyState === 'live' ? req.audio : undefined }
   let stream: MediaStream
   try {
     stream = await request(req)
@@ -62,13 +70,23 @@ export async function openCamera(req: CameraRequest): Promise<MediaStream> {
     if (!req.deviceId || !stale) throw new CameraError(classify(err), err)
     // deviceIds können sich ändern (z. B. nach Löschen der Website-Daten).
     try {
-      stream = await request({ facing: req.facing })
+      stream = await request({ facing: req.facing, audio: req.audio })
     } catch (err2) {
       throw new CameraError(classify(err2), err2)
     }
   }
   await widestZoom(stream)
   await preferFullSensor(stream)
+  // Falls iOS das übernommene Mikrofon beim Kamerastart beendet hat: neu holen.
+  if (req.audio && stream.getTracks().includes(req.audio) && req.audio.readyState !== 'live') {
+    stream.removeTrack(req.audio)
+    try {
+      const mic = await navigator.mediaDevices.getUserMedia({ audio: true })
+      mic.getAudioTracks().forEach((t) => stream.addTrack(t))
+    } catch {
+      // Dann eben ohne Ton.
+    }
+  }
   return stream
 }
 
@@ -120,6 +138,58 @@ async function widestZoom(stream: MediaStream): Promise<void> {
   } catch {
     // Kein Zoom möglich – dann eben mit Standard-Bildfeld.
   }
+}
+
+// ---------------------------------------------------------------------------
+// Zoom
+
+export interface ZoomRange {
+  min: number
+  max: number
+}
+
+/** Zoombereich der laufenden Kamera; null, wenn der Browser keinen Zoom kann. */
+export function zoomRange(stream: MediaStream | null | undefined): ZoomRange | null {
+  const track = stream?.getVideoTracks()[0]
+  const z = (track?.getCapabilities?.() as { zoom?: { min?: number; max?: number } } | undefined)?.zoom
+  if (!z || z.min === undefined || z.max === undefined || z.max <= z.min) return null
+  return { min: z.min, max: z.max }
+}
+
+export function currentZoom(stream: MediaStream | null | undefined): number | null {
+  const z = (stream?.getVideoTracks()[0]?.getSettings() as { zoom?: number } | undefined)?.zoom
+  return typeof z === 'number' ? z : null
+}
+
+export function clampZoom(value: number, range: ZoomRange): number {
+  return Math.min(range.max, Math.max(range.min, value))
+}
+
+/** Höchster Zoom, den die Halten-und-Wischen-Geste erreicht. */
+export const MAX_DRAG_ZOOM = 8
+
+/**
+ * Wischweg (0–1) → Zoom. Exponentiell, damit jeder Zentimeter gleich viel
+ * „näher“ bringt. 0 = Zoom beim Drücken, 1 = MAX_DRAG_ZOOM bzw. Kameramaximum.
+ */
+export function dragToZoom(progress: number, from: number, max: number): number {
+  const p = Math.min(1, Math.max(0, progress))
+  const top = Math.max(from, Math.min(max, MAX_DRAG_ZOOM))
+  return from * (top / from) ** p
+}
+
+/** Zoom setzen, ohne den Track neu zu starten – geht auch während der Aufnahme. */
+export async function setZoom(stream: MediaStream | null | undefined, value: number): Promise<number | null> {
+  const track = stream?.getVideoTracks()[0]
+  const range = zoomRange(stream)
+  if (!track || !range) return null
+  const zoom = clampZoom(value, range)
+  try {
+    await track.applyConstraints({ advanced: [{ zoom } as MediaTrackConstraintSet] })
+  } catch {
+    return null
+  }
+  return zoom
 }
 
 /** Stoppt alle Tracks, sonst bleibt die Kamera-LED an. */

@@ -8,11 +8,16 @@
   import {
     CameraError,
     cameraPermission,
+    clampZoom,
+    currentZoom,
+    dragToZoom,
     isStreamLive,
     lensesFor,
     listCameras,
     openCamera,
+    setZoom,
     stopStream,
+    zoomRange,
     type CameraDevice,
     type CameraErrorKind,
     type Facing,
@@ -48,6 +53,11 @@
     environment: { ultra: '0.5×', wide: '1×', tele: 'Tele' },
   }
   const DEFAULT_LENS: Record<Facing, Lens> = { user: 'ultra', environment: 'wide' }
+  /** Bildwinkel je Objektiv in der Sprache der Chips (für die Zoom-Anzeige). */
+  const LENS_BASE: Record<Facing, Partial<Record<Lens, number>>> = {
+    user: { ultra: 1, wide: 2 },
+    environment: { ultra: 0.5, wide: 1 },
+  }
   const LENSES: Lens[] = ['ultra', 'wide', 'tele']
 
   // Zuletzt gewählte Kamera merken, Objektiv je Seite.
@@ -78,6 +88,24 @@
   let recording: ActiveRecording | null = null
   let isRecording = $state(false)
   let fileInput: HTMLInputElement | undefined = $state()
+  /** Mikrofon zwischen zwei Kameras: wird beim Wechsel weiterverwendet. */
+  let spareAudio: MediaStreamTrack | null = null
+  let destroyed = false
+  /** Läuft gerade das Speichern einer Aufnahme? Erst danach Kamera freigeben. */
+  let saving: Promise<void> = Promise.resolve()
+  // Letztes Bild beim Kamerawechsel stehen lassen statt Schwarz.
+  let frozenEl: HTMLCanvasElement | undefined = $state()
+  let frozen = $state(false)
+  let frozenMirror = $state(false)
+  // Zoom
+  let zoom = $state<number | null>(null)
+  let zoomVisible = $state(false)
+  let zoomTarget: number | null = null
+  let zoomRaf = 0
+  let zoomHideTimer = 0
+  let dragFrom: number | null = null
+  const pointers = new Map<number, { x: number; y: number }>()
+  let pinch: { dist: number; zoom: number } | null = null
 
   const lenses = $derived(lensesFor(cameras, facing))
   const activeLens = $derived.by((): Lens => {
@@ -86,6 +114,14 @@
   })
   // Spiegeln nach tatsächlicher Kamera, nicht nach Wunsch (Fallbacks).
   const mirror = $derived((stream?.getVideoTracks()[0]?.getSettings().facingMode ?? facing) === 'user')
+  const range = $derived(zoomRange(stream))
+  const zoomLabel = $derived.by(() => {
+    if (zoom === null || !range) return ''
+    // Nur ein Objektiv auf der Seite → das ist „1×“.
+    const base = lenses.length > 1 ? (LENS_BASE[facing][activeLens] ?? 1) : 1
+    const v = (base * zoom) / range.min
+    return `${v < 10 ? v.toFixed(1).replace(/\.0$/, '') : Math.round(v)}×`
+  })
 
   const mimeType = pickRecorderMimeType()
   // Vorschau im Zielformat zeigen: was man sieht, landet (mittig) im Video.
@@ -140,10 +176,12 @@
     const want = facing
     const wantLens = lens
     const deviceId = untrack(() => lensesFor(cameras, want).find((d) => d.lens === wantLens)?.id)
+    const audio = spareAudio ?? undefined
+    spareAudio = null
     let cancelled = false
     let opened: MediaStream | null = null
     cameraError = null
-    openCamera({ facing: want, deviceId })
+    openCamera({ facing: want, deviceId, audio })
       .then(async (s) => {
         if (cancelled) return stopStream(s)
         opened = s
@@ -158,11 +196,21 @@
         if (target && current && target.id !== current) reopen++
       })
       .catch((err) => {
-        if (!cancelled) cameraError = err instanceof CameraError ? err.kind : 'other'
+        audio?.stop()
+        if (cancelled) return
+        frozen = false
+        cameraError = err instanceof CameraError ? err.kind : 'other'
       })
     return () => {
       cancelled = true
-      stopStream(opened)
+      if (opened && !destroyed && isStreamLive(opened)) {
+        // Kamerawechsel: Bild einfrieren, Mikrofon behalten, nur Video stoppen.
+        freezeFrame()
+        spareAudio = opened.getAudioTracks().find((t) => t.readyState === 'live') ?? null
+        opened.getVideoTracks().forEach((t) => t.stop())
+      } else {
+        stopStream(opened)
+      }
       if (stream === opened) stream = null
     }
   })
@@ -170,6 +218,83 @@
   $effect(() => {
     if (videoEl) videoEl.srcObject = stream
   })
+
+  $effect(() => {
+    zoom = currentZoom(stream)
+  })
+
+  function freezeFrame() {
+    const v = videoEl
+    const c = frozenEl
+    if (!v || !c || v.readyState < 2 || !v.videoWidth) return
+    c.width = v.videoWidth
+    c.height = v.videoHeight
+    c.getContext('2d')?.drawImage(v, 0, 0)
+    frozenMirror = mirror
+    frozen = true
+  }
+
+  /** Kamera und Mikrofon ganz freigeben (App im Hintergrund). */
+  function releaseCamera() {
+    freezeFrame()
+    stopStream(stream)
+    stream = null
+    spareAudio?.stop()
+    spareAudio = null
+  }
+
+  // --- Zoom ---------------------------------------------------------------
+
+  function showZoom() {
+    zoomVisible = true
+    clearTimeout(zoomHideTimer)
+    zoomHideTimer = window.setTimeout(() => (zoomVisible = false), 1200)
+  }
+
+  /** Zoom anfordern; mehrere Werte pro Frame werden zu einem zusammengefasst. */
+  function requestZoom(value: number) {
+    if (!range) return
+    zoom = clampZoom(value, range)
+    zoomTarget = zoom
+    showZoom()
+    if (zoomRaf) return
+    zoomRaf = requestAnimationFrame(() => {
+      zoomRaf = 0
+      const z = zoomTarget
+      zoomTarget = null
+      if (z !== null) void setZoom(stream, z)
+    })
+  }
+
+  /** Halten und nach oben wischen (wie bei WhatsApp). */
+  function onZoomDrag(progress: number) {
+    if (!range) return
+    dragFrom ??= zoom ?? range.min
+    requestZoom(dragToZoom(progress, dragFrom, range.max))
+  }
+
+  function pinchDistance(): number {
+    const [a, b] = [...pointers.values()]
+    return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0
+  }
+
+  function onPinchDown(e: PointerEvent) {
+    if (!range) return
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    if (pointers.size === 2) pinch = { dist: pinchDistance(), zoom: zoom ?? range.min }
+  }
+
+  function onPinchMove(e: PointerEvent) {
+    if (!pointers.has(e.pointerId)) return
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    if (pinch && pointers.size === 2 && pinch.dist > 0) requestZoom((pinch.zoom * pinchDistance()) / pinch.dist)
+  }
+
+  function onPinchUp(e: PointerEvent) {
+    pointers.delete(e.pointerId)
+    if (pointers.size < 2) pinch = null
+  }
 
   onMount(() => {
     // Nur sofort öffnen, wenn der Browser nicht nachfragen wird.
@@ -180,15 +305,33 @@
         else if (p === 'denied') cameraError = 'denied'
       })
     }
-    // iOS beendet die Kamera im Hintergrund: beim Zurückkehren neu öffnen.
-    const onVisible = () => {
-      if (started && document.visibilityState === 'visible' && !isStreamLive(stream)) reopen++
+    // Im Hintergrund Kamera und Mikrofon freigeben (sonst bleibt der Mikrofon-Punkt an),
+    // beim Zurückkehren neu öffnen. Eine laufende Aufnahme beendet der RecordButton
+    // vorher selbst; erst wenn sie gespeichert ist, wird freigegeben.
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        void saving.then(() => {
+          if (document.visibilityState === 'hidden') releaseCamera()
+        })
+      } else if (started && !isStreamLive(stream)) {
+        reopen++
+      }
     }
+    const onPageHide = () => void saving.then(releaseCamera)
     const onDeviceChange = () => void refreshCameras()
-    document.addEventListener('visibilitychange', onVisible)
+    document.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('pagehide', onPageHide)
+    window.addEventListener('pageshow', onVisibility)
     navigator.mediaDevices?.addEventListener?.('devicechange', onDeviceChange)
     return () => {
-      document.removeEventListener('visibilitychange', onVisible)
+      destroyed = true
+      spareAudio?.stop()
+      spareAudio = null
+      clearTimeout(zoomHideTimer)
+      cancelAnimationFrame(zoomRaf)
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('pagehide', onPageHide)
+      window.removeEventListener('pageshow', onVisibility)
       navigator.mediaDevices?.removeEventListener?.('devicechange', onDeviceChange)
     }
   })
@@ -197,20 +340,27 @@
     if (!stream || !isStreamLive(stream)) return false
     recording = startRecording(stream, mimeType)
     isRecording = true
+    dragFrom = null
     return true
   }
 
-  async function handleStop() {
+  function handleStop(): Promise<void> {
     const rec = recording
     recording = null
     isRecording = false
-    if (!rec) return
-    try {
-      const { blob, elapsed } = await rec.stop()
-      if (blob.size > 0) await ingestBlob(blob, 'recorded', { fallbackDuration: elapsed })
-    } catch (err) {
-      console.error('Aufnahme konnte nicht gespeichert werden', err)
-    }
+    // Zoom per Wischen gilt nur für diese Aufnahme.
+    if (dragFrom !== null) requestZoom(dragFrom)
+    dragFrom = null
+    if (!rec) return saving
+    saving = (async () => {
+      try {
+        const { blob, elapsed } = await rec.stop()
+        if (blob.size > 0) await ingestBlob(blob, 'recorded', { fallbackDuration: elapsed })
+      } catch (err) {
+        console.error('Aufnahme konnte nicht gespeichert werden', err)
+      }
+    })()
+    return saving
   }
 
   function onFilesChosen(e: Event) {
@@ -234,12 +384,33 @@
   <!-- svelte-ignore a11y_media_has_caption -->
   <video
     bind:this={videoEl}
+    class="preview"
     autoplay
     playsinline
     muted
     class:mirror={mirror}
     style:--ar={out.width / out.height}
+    onplaying={() => (frozen = false)}
   ></video>
+  <canvas
+    bind:this={frozenEl}
+    class="preview frozen"
+    class:mirror={frozenMirror}
+    hidden={!frozen}
+    style:--ar={out.width / out.height}
+  ></canvas>
+  <!-- Zwei-Finger-Zoom auf der Vorschau, auch während der Aufnahme. -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="gesture"
+    onpointerdown={onPinchDown}
+    onpointermove={onPinchMove}
+    onpointerup={onPinchUp}
+    onpointercancel={onPinchUp}
+  ></div>
+  {#if zoomVisible && zoomLabel}
+    <div class="zoom">{zoomLabel}</div>
+  {/if}
   {#if debug && camInfo}
     <div class="debug">{camInfo}</div>
   {/if}
@@ -292,7 +463,7 @@
         aria-label="Aus Galerie importieren">▦</button
       >
       <input bind:this={fileInput} type="file" accept="video/*" multiple hidden onchange={onFilesChosen} />
-      <RecordButton disabled={!stream} onstart={handleStart} onstop={handleStop} />
+      <RecordButton disabled={!stream} onstart={handleStart} onstop={handleStop} onzoomdrag={onZoomDrag} />
       <button
         class="side primary"
         disabled={!store.hasPlayableClips || isRecording}
@@ -312,7 +483,7 @@
     overflow: hidden;
   }
   /* Rahmen im Ausgabeformat, mittig; object-fit: cover = derselbe Zuschnitt wie der Renderer. */
-  video {
+  .preview {
     position: fixed;
     top: 50%;
     left: 50%;
@@ -324,8 +495,33 @@
     z-index: 0;
   }
   /* Frontkamera nur in der Vorschau spiegeln, nicht in der Aufnahme. */
-  video.mirror {
+  .preview.mirror {
     transform: translate(-50%, -50%) scaleX(-1);
+  }
+  .frozen {
+    filter: blur(10px) brightness(0.8);
+  }
+  .frozen[hidden] {
+    display: none;
+  }
+  .gesture {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    touch-action: none;
+  }
+  .zoom {
+    position: fixed;
+    top: 4.5rem;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1;
+    padding: 2px 12px;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.55);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
   }
   .debug {
     position: fixed;

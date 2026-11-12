@@ -196,7 +196,15 @@
     } catch (err) {
       console.error('Renderer nicht verfügbar', err)
     }
+    // Voiceover im Hintergrund beenden und speichern, sonst bleibt das Mikrofon an.
+    const onHidden = () => {
+      if (document.visibilityState === 'hidden' && voState === 'recording') void finishVoice()
+    }
+    document.addEventListener('visibilitychange', onHidden)
+    window.addEventListener('pagehide', onHidden)
     return () => {
+      document.removeEventListener('visibilitychange', onHidden)
+      window.removeEventListener('pagehide', onHidden)
       stopAll()
       seeker?.dispose()
       renderer?.dispose()

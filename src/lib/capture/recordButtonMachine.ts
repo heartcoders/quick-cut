@@ -4,6 +4,17 @@
  */
 export const HOLD_THRESHOLD_MS = 300
 
+/** Halten und nach oben wischen = zoomen. Unterhalb dieser Strecke passiert nichts. */
+export const ZOOM_DEAD_ZONE_PX = 12
+/** Anteil der Bildschirmhöhe für den vollen Zoomweg. */
+export const ZOOM_DRAG_SHARE = 0.4
+
+/** Wischstrecke nach oben (px, positiv = nach oben) → Zoomfortschritt 0–1. */
+export function dragProgress(dy: number, viewportHeight: number): number {
+  const span = Math.max(1, viewportHeight * ZOOM_DRAG_SHARE)
+  return Math.min(1, Math.max(0, (dy - ZOOM_DEAD_ZONE_PX) / span))
+}
+
 export type ButtonState = 'idle' | 'pressing' | 'recording-tap'
 
 export type ButtonEvent =

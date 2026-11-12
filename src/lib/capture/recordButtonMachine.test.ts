@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { initialMachine, transition, type ButtonEvent, type MachineState } from './recordButtonMachine'
+import { dragProgress, initialMachine, transition, type ButtonEvent, type MachineState } from './recordButtonMachine'
 
 function run(events: ButtonEvent[], start: MachineState = initialMachine) {
   let m = start
@@ -78,5 +78,19 @@ describe('recordButtonMachine (Tabelle aus dem Handover)', () => {
       { type: 'up', at: 4050 },
     ])
     expect(r).toEqual({ state: 'idle', effects: ['start', 'stop', 'start', 'stop'] })
+  })
+})
+
+describe('dragProgress (Halten + Wischen = Zoom)', () => {
+  it('Totzone: leichtes Verrutschen zoomt nicht', () => {
+    expect(dragProgress(0, 800)).toBe(0)
+    expect(dragProgress(10, 800)).toBe(0)
+    expect(dragProgress(-50, 800)).toBe(0)
+  })
+
+  it('wächst mit der Strecke nach oben und endet bei 1', () => {
+    expect(dragProgress(12 + 160, 800)).toBeCloseTo(0.5)
+    expect(dragProgress(12 + 320, 800)).toBe(1)
+    expect(dragProgress(2000, 800)).toBe(1)
   })
 })

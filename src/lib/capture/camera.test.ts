@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { classifyCamera, fourByThreeCandidates, lensesFor, type CameraDevice } from './camera'
+import { clampZoom, classifyCamera, dragToZoom, fourByThreeCandidates, lensesFor, MAX_DRAG_ZOOM, type CameraDevice } from './camera'
 
 function devices(labels: string[]): CameraDevice[] {
   return labels.map((label, i) => ({ id: `id${i}`, label, ...classifyCamera(label) }))
@@ -65,5 +65,30 @@ describe('fourByThreeCandidates', () => {
   it('schon 4:3 oder unbekannt → nichts tun', () => {
     expect(fourByThreeCandidates(1440, 1920)).toEqual([])
     expect(fourByThreeCandidates(0, 0)).toEqual([])
+  })
+})
+
+describe('Zoom', () => {
+  it('clampZoom hält den Bereich ein', () => {
+    expect(clampZoom(0.5, { min: 1, max: 5 })).toBe(1)
+    expect(clampZoom(3, { min: 1, max: 5 })).toBe(3)
+    expect(clampZoom(9, { min: 1, max: 5 })).toBe(5)
+  })
+
+  it('dragToZoom: 0 → Ausgangszoom, 1 → Maximum der Geste', () => {
+    expect(dragToZoom(0, 1, 16)).toBe(1)
+    expect(dragToZoom(1, 1, 16)).toBeCloseTo(MAX_DRAG_ZOOM)
+    expect(dragToZoom(1, 1, 3)).toBeCloseTo(3)
+    expect(dragToZoom(-1, 2, 16)).toBe(2)
+  })
+
+  it('dragToZoom steigt monoton und exponentiell (Mitte = geometrisches Mittel)', () => {
+    const steps = [0, 0.25, 0.5, 0.75, 1].map((p) => dragToZoom(p, 1, 16))
+    steps.slice(1).forEach((z, i) => expect(z).toBeGreaterThan(steps[i]!))
+    expect(dragToZoom(0.5, 1, 16)).toBeCloseTo(Math.sqrt(MAX_DRAG_ZOOM))
+  })
+
+  it('dragToZoom ab höherem Ausgangszoom zoomt nie heraus', () => {
+    expect(dragToZoom(1, 10, 16)).toBe(10)
   })
 })

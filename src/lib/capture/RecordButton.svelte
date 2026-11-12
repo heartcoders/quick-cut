@@ -3,21 +3,25 @@
   import ProgressRing from '../../ui/ProgressRing.svelte'
   import { formatClock } from '../../ui/format'
   import { MAX_CLIP_SECONDS } from '../limits'
-  import { initialMachine, transition, type ButtonEvent, type MachineState } from './recordButtonMachine'
+  import { dragProgress, initialMachine, transition, type ButtonEvent, type MachineState } from './recordButtonMachine'
 
   let {
     disabled = false,
     onstart,
     onstop,
+    onzoomdrag,
   }: {
     disabled?: boolean
     /** Startet die Aufnahme; `false` oder Exception → Button bleibt idle. */
     onstart: () => boolean
     onstop: () => void
+    /** Halten und nach oben wischen: Zoomfortschritt 0–1. */
+    onzoomdrag?: (progress: number) => void
   } = $props()
 
   let machine = $state<MachineState>(initialMachine)
   let startedAt = 0
+  let startY = 0
   let elapsed = $state(0)
   let raf = 0
 
@@ -65,7 +69,13 @@
     e.preventDefault()
     // Leichtes Verrutschen des Fingers soll nicht abbrechen.
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    startY = e.clientY
     send({ type: 'down', at: e.timeStamp })
+  }
+
+  function onpointermove(e: PointerEvent) {
+    if (!e.isPrimary || machine.state !== 'pressing' || !onzoomdrag) return
+    onzoomdrag(dragProgress(startY - e.clientY, window.innerHeight))
   }
 
   function onpointerup(e: PointerEvent) {
@@ -104,6 +114,7 @@
     aria-label={recording ? 'Aufnahme stoppen' : 'Aufnahme starten'}
     aria-pressed={recording}
     {onpointerdown}
+    {onpointermove}
     {onpointerup}
     {onpointercancel}
     oncontextmenu={(e) => e.preventDefault()}
