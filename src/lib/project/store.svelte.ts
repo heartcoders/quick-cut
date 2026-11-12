@@ -58,7 +58,9 @@ class ProjectStore {
           const blob = await db.getThumb(key)
           if (blob) thumbnails.push(URL.createObjectURL(blob))
         }
-        const status: ClipStatus = c.duration > 0 ? 'ready' : 'error'
+        // duration 0 heißt: Verarbeitung lief beim Reload noch → fortsetzen
+        // (resumePendingClips in media/pipeline.ts).
+        const status: ClipStatus = !c.playable ? 'error' : c.duration > 0 ? 'ready' : 'processing'
         clips.push({ ...c, thumbnails, status })
       }
       this.project = { ...rec, clips }

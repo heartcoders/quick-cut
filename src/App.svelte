@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import { resumePendingClips } from './lib/media/pipeline'
   import { requestPersistentStorage } from './lib/project/db'
   import { store } from './lib/project/store.svelte'
   import { router } from './lib/router.svelte'
@@ -9,7 +10,7 @@
 
   onMount(() => {
     const stopRouter = router.start()
-    void store.load()
+    void store.load().then(resumePendingClips)
     void requestPersistentStorage()
 
     // Ausstehende Änderungen sichern, bevor iOS die Seite einfriert.

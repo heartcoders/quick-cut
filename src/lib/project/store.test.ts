@@ -73,11 +73,13 @@ describe('ProjectStore', () => {
     expect(await db.getThumb('t1')).toBeUndefined()
   })
 
-  it('markiert Clips ohne Dauer nach dem Laden als Fehler', async () => {
+  it('setzt Status nach dem Laden: ohne Dauer → processing, nicht abspielbar → error', async () => {
     store.addClip(rec('a', { duration: 0, trimEnd: 0 }), 'processing')
+    store.addClip(rec('b', { playable: false }), 'error')
+    store.addClip(rec('c'))
     await store.flush()
     store._reset()
     await store.load()
-    expect(store.getClip('a')!.status).toBe('error')
+    expect(store.project.clips.map((c) => c.status)).toEqual(['processing', 'error', 'ready'])
   })
 })
