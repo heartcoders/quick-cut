@@ -1,0 +1,139 @@
+import * as db from './db'
+import { newId } from './id'
+import {
+  NO_TRANSITION,
+  type AspectRatio,
+  type Clip,
+  type ClipRecord,
+  type ClipStatus,
+  type Project,
+  type ProjectRecord,
+} from './types'
+
+const SAVE_DEBOUNCE_MS = 300
+
+function emptyProject(): Project {
+  return { id: newId(), clips: [], transitions: [], outputAspect: '9:16' }
+}
+
+function toRecord(project: Project): ProjectRecord {
+  const snap = $state.snapshot(project) as Project
+  return {
+    ...snap,
+    clips: snap.clips.map(({ thumbnails: _t, status: _s, ...rec }) => rec),
+  }
+}
+
+/** Hält genau `clips.length - 1` Übergänge (Phase 6 nutzt sie, bis dahin 'none'). */
+function syncTransitions(project: Project): void {
+  const want = Math.max(0, project.clips.length - 1)
+  while (project.transitions.length < want) project.transitions.push({ ...NO_TRANSITION })
+  project.transitions.length = want
+}
+
+class ProjectStore {
+  project = $state<Project>(emptyProject())
+  loaded = $state(false)
+
+  /** Summe der getrimmten Längen aller abspielbaren Clips (ohne Übergänge). */
+  totalDuration = $derived(
+    this.project.clips
+      .filter((c) => c.playable)
+      .reduce((sum, c) => sum + (c.trimEnd - c.trimStart), 0),
+  )
+
+  hasClips = $derived(this.project.clips.length > 0)
+
+  #saveTimer: ReturnType<typeof setTimeout> | null = null
+  #savePending: Promise<void> = Promise.resolve()
+
+  /** Lädt das gespeicherte Projekt und erzeugt die Thumbnail-URLs neu. */
+  async load(): Promise<void> {
+    const rec = await db.loadProject()
+    if (rec) {
+      const clips: Clip[] = []
+      for (const c of rec.clips) {
+        const thumbnails: string[] = []
+        for (const key of c.thumbKeys) {
+          const blob = await db.getThumb(key)
+          if (blob) thumbnails.push(URL.createObjectURL(blob))
+        }
+        const status: ClipStatus = c.duration > 0 ? 'ready' : 'error'
+        clips.push({ ...c, thumbnails, status })
+      }
+      this.project = { ...rec, clips }
+      syncTransitions(this.project)
+    }
+    this.loaded = true
+  }
+
+  getClip(id: string): Clip | undefined {
+    return this.project.clips.find((c) => c.id === id)
+  }
+
+  addClip(record: ClipRecord, status: ClipStatus = 'ready', thumbnails: string[] = []): Clip {
+    this.project.clips.push({ ...record, thumbnails, status })
+    syncTransitions(this.project)
+    this.scheduleSave()
+    // Proxy aus dem State zurückgeben, damit spätere Änderungen reaktiv sind.
+    return this.project.clips[this.project.clips.length - 1]!
+  }
+
+  updateClip(id: string, patch: Partial<Omit<Clip, 'id'>>): void {
+    const clip = this.getClip(id)
+    if (!clip) return
+    if (patch.thumbnails) revokeAll(clip.thumbnails.filter((u) => !patch.thumbnails!.includes(u)))
+    Object.assign(clip, patch)
+    this.scheduleSave()
+  }
+
+  setTrim(id: string, trimStart: number, trimEnd: number): void {
+    this.updateClip(id, { trimStart, trimEnd })
+  }
+
+  setAspect(aspect: AspectRatio): void {
+    this.project.outputAspect = aspect
+    this.scheduleSave()
+  }
+
+  async removeClip(id: string): Promise<void> {
+    const idx = this.project.clips.findIndex((c) => c.id === id)
+    if (idx < 0) return
+    const [clip] = this.project.clips.splice(idx, 1)
+    syncTransitions(this.project)
+    revokeAll(clip!.thumbnails)
+    this.scheduleSave()
+    await db.deleteClipData(clip!.blobKey, clip!.thumbKeys)
+  }
+
+  scheduleSave(): void {
+    if (this.#saveTimer) clearTimeout(this.#saveTimer)
+    this.#saveTimer = setTimeout(() => void this.flush(), SAVE_DEBOUNCE_MS)
+  }
+
+  /** Speichert sofort (z. B. bei pagehide oder in Tests). */
+  async flush(): Promise<void> {
+    if (this.#saveTimer) {
+      clearTimeout(this.#saveTimer)
+      this.#saveTimer = null
+    }
+    const rec = toRecord(this.project)
+    this.#savePending = this.#savePending.then(() => db.saveProject(rec))
+    await this.#savePending
+  }
+
+  /** Nur für Tests. */
+  _reset(): void {
+    if (this.#saveTimer) clearTimeout(this.#saveTimer)
+    this.#saveTimer = null
+    for (const c of this.project.clips) revokeAll(c.thumbnails)
+    this.project = emptyProject()
+    this.loaded = false
+  }
+}
+
+function revokeAll(urls: string[]): void {
+  for (const u of urls) URL.revokeObjectURL(u)
+}
+
+export const store = new ProjectStore()
