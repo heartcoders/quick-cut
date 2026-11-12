@@ -8,3 +8,12 @@ export function formatClock(seconds: number): string {
 export function formatShort(seconds: number): string {
   return seconds < 60 ? `${seconds.toFixed(1).replace('.', ',')} s` : formatClock(seconds)
 }
+
+/** Zehntelgenau: 3.46 → "3,5 s", 63.4 → "1:03,4" */
+export function formatPrecise(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds * 10) / 10)
+  if (s < 60) return `${s.toFixed(1).replace('.', ',')} s`
+  const m = Math.floor(s / 60)
+  const rest = (s - m * 60).toFixed(1).replace('.', ',').padStart(4, '0')
+  return `${m}:${rest}`
+}

@@ -1,3 +1,5 @@
+import { releaseClipUrl } from '../media/clipUrls'
+import { totalDuration } from '../timeline/timeline'
 import * as db from './db'
 import { newId } from './id'
 import {
@@ -39,7 +41,7 @@ class ProjectStore {
   playableClips = $derived(this.project.clips.filter((c) => c.playable && c.status === 'ready'))
 
   /** Summe der getrimmten Längen aller abspielbaren Clips (ohne Übergänge). */
-  totalDuration = $derived(this.playableClips.reduce((sum, c) => sum + (c.trimEnd - c.trimStart), 0))
+  totalDuration = $derived(totalDuration(this.playableClips))
 
   hasClips = $derived(this.project.clips.length > 0)
   hasPlayableClips = $derived(this.playableClips.length > 0)
@@ -104,6 +106,7 @@ class ProjectStore {
     const [clip] = this.project.clips.splice(idx, 1)
     syncTransitions(this.project)
     revokeAll(clip!.thumbnails)
+    releaseClipUrl(clip!.blobKey)
     this.scheduleSave()
     await db.deleteClipData(clip!.blobKey, clip!.thumbKeys)
   }

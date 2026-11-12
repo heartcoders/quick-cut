@@ -1,3 +1,4 @@
+import { hasFrameCallback } from './frameLoop'
 /** Hilfen rund um ein verstecktes <video> zum Auslesen eines Blobs. */
 
 export interface LoadedVideo {
@@ -57,7 +58,7 @@ export async function seekTo(video: HTMLVideoElement, t: number, timeoutMs = 300
   if (r !== 'seeked') return false
   // Safari/Chrome: Frame ist nach 'seeked' nicht immer schon dekodiert.
   if (video.readyState < 2) await once(video, ['loadeddata', 'canplay'], 1000)
-  if ('requestVideoFrameCallback' in video) {
+  if (hasFrameCallback(video)) {
     await Promise.race([
       new Promise<void>((res) => video.requestVideoFrameCallback(() => res())),
       new Promise<void>((res) => setTimeout(res, 150)),

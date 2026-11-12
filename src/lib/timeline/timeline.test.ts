@@ -1,0 +1,65 @@
+import { describe, expect, it } from 'vitest'
+import { clipStartTimes, moveHandle, pxToTime, resolve, timeToPx, totalDuration } from './timeline'
+
+const c = (duration: number, trimStart = 0, trimEnd = duration) => ({ duration, trimStart, trimEnd })
+
+describe('totalDuration / clipStartTimes', () => {
+  it('summiert getrimmte Längen', () => {
+    const clips = [c(5, 1, 3), c(4), c(10, 2.5, 3)]
+    expect(totalDuration(clips)).toBe(6.5)
+    expect(clipStartTimes(clips)).toEqual([0, 2, 6])
+  })
+  it('leer → 0', () => expect(totalDuration([])).toBe(0))
+})
+
+describe('resolve', () => {
+  const clips = [c(5, 1, 3), c(4)]
+  it.each([
+    [0, 0, 1],
+    [1.5, 0, 2.5],
+    [2, 1, 0], // Grenze gehört zum nächsten Clip
+    [5.9, 1, 3.9],
+    [6, 1, 4], // genau das Ende
+  ])('t=%s → Clip %s @ %s', (t, index, local) => {
+    const r = resolve(clips, t)!
+    expect(r.index).toBe(index)
+    expect(r.localTime).toBeCloseTo(local)
+  })
+  it('außerhalb → null', () => {
+    expect(resolve(clips, -0.1)).toBeNull()
+    expect(resolve(clips, 6.1)).toBeNull()
+    expect(resolve([], 0)).toBeNull()
+  })
+})
+
+describe('pxToTime / timeToPx', () => {
+  it('rechnet linear und begrenzt', () => {
+    expect(pxToTime(150, 300, 10)).toBe(5)
+    expect(pxToTime(-20, 300, 10)).toBe(0)
+    expect(pxToTime(400, 300, 10)).toBe(10)
+    expect(timeToPx(2.5, 300, 10)).toBe(75)
+    expect(timeToPx(20, 300, 10)).toBe(300)
+  })
+})
+
+describe('moveHandle', () => {
+  const clip = c(10, 2, 8)
+  it('bewegt Start und rundet auf 0,01', () => {
+    expect(moveHandle(clip, 'start', 3.456)).toEqual({ trimStart: 3.46, trimEnd: 8, hitLimit: false })
+  })
+  it('Start kann Ende nicht überholen (Mindestlänge 0,5 s)', () => {
+    expect(moveHandle(clip, 'start', 9)).toEqual({ trimStart: 7.5, trimEnd: 8, hitLimit: true })
+  })
+  it('Start nicht unter 0', () => {
+    expect(moveHandle(clip, 'start', -1)).toEqual({ trimStart: 0, trimEnd: 8, hitLimit: true })
+  })
+  it('Ende kann Start nicht unterschreiten', () => {
+    expect(moveHandle(clip, 'end', 1)).toEqual({ trimStart: 2, trimEnd: 2.5, hitLimit: true })
+  })
+  it('Ende nicht über duration', () => {
+    expect(moveHandle(clip, 'end', 11)).toEqual({ trimStart: 2, trimEnd: 10, hitLimit: true })
+  })
+  it('Clip kürzer als Mindestlänge bleibt gültig', () => {
+    expect(moveHandle(c(0.3), 'start', 0.2)).toEqual({ trimStart: 0, trimEnd: 0.3, hitLimit: true })
+  })
+})
