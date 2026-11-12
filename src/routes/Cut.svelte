@@ -11,7 +11,9 @@
   import type { RenderClip, Renderer } from '../lib/renderer/types'
   import { router } from '../lib/router.svelte'
   import { clipStartTimes, effectiveDurations, type Handle } from '../lib/timeline/timeline'
+  import { SequencePlayer } from '../lib/media/sequencePlayer'
   import ClipStrip from '../ui/ClipStrip.svelte'
+  import SourceVideos from '../ui/SourceVideos.svelte'
   import { formatPrecise } from '../ui/format'
   import Screen from '../ui/Screen.svelte'
   import TransitionSheet from '../ui/TransitionSheet.svelte'
@@ -28,13 +30,16 @@
   let renderClips = $state<RenderClip[]>([])
   let sheetIndex = $state<number | null>(null)
   let previewingTransition = $state(false)
+  let playingId = $state<string | null>(null) // Clip, der bei „Alles“ gerade läuft
+  const debug = new URLSearchParams(location.search).has('debug')
+  let debugText = $state('')
 
   let single: HTMLVideoElement | undefined = $state()
   let videoA: HTMLVideoElement | undefined = $state()
   let videoB: HTMLVideoElement | undefined = $state()
   let stage: HTMLDivElement | undefined = $state()
   let seeker: Seeker | null = null
-  let renderer: Renderer | null = null
+  let renderer = $state.raw<Renderer | null>(null)
   let audio: AudioGraph | null = null
   let job: RenderJob | null = null
   let stopRange: (() => void) | null = null
@@ -53,11 +58,36 @@
     }
   })
 
+  let renderClipIds: string[] = []
+  let stillReady = false // erstes Bild liegt bereits im Canvas
+
+  // Im Leerlauf das erste Bild der Timeline ins Canvas rendern: „Alles“ kann es
+  // dann sofort zeigen, ohne kurz den gerade gewählten Clip aufblitzen zu lassen.
+  $effect(() => {
+    const r = renderer
+    const rc = renderClips
+    const tr = plainTransitions(store.playableTransitions)
+    const aspect = store.project.outputAspect
+    if (!r || rc.length === 0 || mode !== 'idle') return
+    stillReady = false
+    let cancelled = false
+    void r
+      .load({ clips: rc, transitions: tr, outputAspect: aspect })
+      .then(() => (mode === 'idle' && !cancelled ? r.renderFrame(0) : undefined))
+      .then(() => {
+        if (!cancelled && mode === 'idle') stillReady = true
+      })
+    return () => (cancelled = true)
+  })
+
   // Renderer-Eingaben aktuell halten (Trim, Reihenfolge, URLs).
   $effect(() => {
     let cancelled = false
+    const ids = clips.map((c) => c.id)
     void buildRenderClips(clips).then((r) => {
-      if (!cancelled) renderClips = r
+      if (cancelled) return
+      renderClips = r
+      renderClipIds = ids
     })
     return () => (cancelled = true)
   })
@@ -104,6 +134,7 @@
     job = null
     canvasReady = false
     previewingTransition = false
+    playingId = null
     mode = 'idle'
   }
 
@@ -117,6 +148,8 @@
     audio ??= AudioGraph.tryCreate()
     allTime = range?.from ?? 0
     mode = 'all'
+    // Ab Start: Canvas zeigt das vorgerenderte erste Bild (nur bei Start bei 0).
+    canvasReady = !range && stillReady
     const j = startRender({
       clips: renderClips,
       transitions: plainTransitions(store.playableTransitions),
@@ -127,9 +160,18 @@
       record: false,
       fromTime: range?.from,
       toTime: range?.to,
-      onProgress: (t) => {
-        allTime = t
-        canvasReady = true
+      onProgress: (t) => (allTime = t),
+      // Canvas erst zeigen, wenn Clip 1 wirklich gezeichnet ist – vorher bleibt
+      // die Einzelvorschau stehen (kein Schwarzbild).
+      onReady: () => (canvasReady = true),
+      onFrame: (f) => {
+        const id = renderClipIds[f.fromIndex] ?? null
+        if (id !== playingId) playingId = id
+        if (debug) {
+          const v = (el: HTMLVideoElement | undefined) =>
+            el ? `${el.currentTime.toFixed(2)}${el.paused ? 'p' : ''}` : '-'
+          debugText = `clip ${f.fromIndex + 1}${f.to ? ` → ${f.fromIndex + 2} ${f.type} p=${f.p.toFixed(2)}` : ''} | A ${v(videoA)} B ${v(videoB)} | lead ${(SequencePlayer.lead * 1000).toFixed(0)} ms`
+        }
       },
     })
     job = j
@@ -235,11 +277,10 @@
       ></video>
       <div class="stage" class:hidden={mode !== 'all' || !canvasReady} bind:this={stage}></div>
     </div>
-    <!-- Quellen für den Renderer: eingehängt, aber unsichtbar (iOS dekodiert sonst nicht). -->
-    <!-- svelte-ignore a11y_media_has_caption -->
-    <video bind:this={videoA} class="source" playsinline preload="auto"></video>
-    <!-- svelte-ignore a11y_media_has_caption -->
-    <video bind:this={videoB} class="source" playsinline preload="auto"></video>
+    <SourceVideos bind:a={videoA} bind:b={videoB} />
+    {#if debug && debugText}
+      <div class="debug">{debugText}</div>
+    {/if}
 
     <div class="controls">
       <button class="play" onclick={togglePlay} aria-label={mode === 'clip' ? 'Pause' : 'Clip abspielen'}>
@@ -270,6 +311,7 @@
 
     <ClipStrip
       selectedId={clip?.id ?? null}
+      {playingId}
       onselect={select}
       ontransition={openTransition}
       reorderable={mode === 'idle'}
@@ -326,14 +368,13 @@
     height: 100%;
     object-fit: contain;
   }
-  .source {
-    position: fixed;
-    left: 0;
-    top: 0;
-    width: 1px;
-    height: 1px;
-    opacity: 0;
-    pointer-events: none;
+  .debug {
+    font: 11px/1.3 ui-monospace, monospace;
+    color: #0f0;
+    background: rgba(0, 0, 0, 0.7);
+    padding: 2px 6px;
+    border-radius: 4px;
+    white-space: pre-wrap;
   }
   .controls {
     display: grid;

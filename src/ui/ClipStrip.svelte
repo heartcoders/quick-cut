@@ -14,6 +14,7 @@
     ontransition,
     activeTransition = null,
     reorderable = false,
+    playingId = null,
   }: {
     selectedId?: string | null
     onselect?: (id: string) => void
@@ -23,6 +24,8 @@
     activeTransition?: number | null
     /** Halten (350 ms) und Ziehen ändert die Reihenfolge. */
     reorderable?: boolean
+    /** Clip, der gerade abgespielt wird (Markierung bei „Alles“). */
+    playingId?: string | null
   } = $props()
 
   const HOLD_MS = 350
@@ -149,6 +152,7 @@
     <div
       class="tile"
       class:selected={clip.id === selectedId}
+      class:playing={clip.id === playingId}
       class:error={clip.status === 'error'}
       class:lifted={drag?.from === i}
       style:transform={drag ? `translateX(${shiftFor(i, drag)}px)${drag.from === i ? ' scale(1.08)' : ''}` : undefined}
@@ -240,6 +244,9 @@
   }
   .selected .thumb {
     outline-color: var(--accent);
+  }
+  .playing .thumb {
+    outline-color: #fff;
   }
   .error .thumb {
     outline-color: var(--danger);

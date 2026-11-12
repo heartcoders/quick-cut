@@ -6,7 +6,7 @@ import {
   type TransitionSpec,
   type TransitionType,
 } from '../timeline/timeline'
-import { END_EPSILON, hasFrameCallback, onEachFrame } from './frameLoop'
+import { END_EPSILON, LEAD_INITIAL, LEAD_SAFETY, nextLead, onEachFrame, whenRunning } from './frameLoop'
 import { once } from './video'
 
 export interface SeqClip {
@@ -50,15 +50,6 @@ async function prepare(el: HTMLVideoElement, clip: SeqClip): Promise<void> {
   if (el.readyState < 2) await once(el, ['loadeddata', 'canplay', 'error'], 3000)
 }
 
-/** Wartet, bis das Element nach play() tatsächlich einen Frame zeigt. */
-function firstFrame(el: HTMLVideoElement): Promise<void> {
-  return new Promise((resolve) => {
-    if (hasFrameCallback(el)) el.requestVideoFrameCallback(() => resolve())
-    else once(el, ['playing'], 1000).then(() => resolve())
-    setTimeout(resolve, 500) // Sicherheitsnetz
-  })
-}
-
 /**
  * Echtzeit-Wiedergabe der Timeline mit zwei abwechselnden <video>-Elementen.
  * - Harter Schnitt: Das alte Element friert auf dem letzten Frame ein, bis das
@@ -67,8 +58,17 @@ function firstFrame(el: HTMLVideoElement): Promise<void> {
  *   laufen parallel, `onFrame` liefert den Fortschritt p.
  * Weil ein Übergang höchstens halb so lang ist wie der kürzere Clip, überlappen
  * sich Ein- und Ausgangsübergang eines Clips nie – zwei Elemente reichen.
+ *
+ * iOS: Die Zeitbasis ist rAF + currentTime (nicht rVFC), weil WebKit rVFC für
+ * nicht direkt angezeigte Videos nicht zuverlässig aufruft. Der nächste Clip
+ * wird um die gemessene Anlaufzeit (`lead`) früher gestartet, damit der harte
+ * Schnitt ohne Stocken passiert – während des Anlaufens steht seine Zeit still,
+ * es geht also kaum Inhalt verloren.
  */
 export class SequencePlayer {
+  /** Gemessener Vorlauf in Sekunden, über Instanzen hinweg gelernt. */
+  static lead = LEAD_INITIAL
+
   #els: [HTMLVideoElement, HTMLVideoElement]
   #cb: SequenceCallbacks
   #session = 0
@@ -135,7 +135,7 @@ export class SequencePlayer {
       if (alive()) this.#finish()
       return
     }
-    await firstFrame(this.#els[0])
+    await whenRunning(this.#els[0])
     if (!alive()) return
     this.#cb.onFrame?.({ from: this.#els[0], to: null, p: 0, fromIndex: startIndex, type: 'none' })
     this.#cb.onReady?.()
@@ -154,13 +154,20 @@ export class SequencePlayer {
       const type = di > 0 ? transitions[i]!.type : 'none'
       const transitionStart = clip.trimEnd - di
       let nextStarted: Promise<void> | null = null
+      let nextRunning = false
 
       const startNext = () =>
         (nextStarted ??= (async () => {
           if (preparing) await preparing
           if (!alive()) return
+          // Anlaufzeit = vom play()-Aufruf bis die Zeit tatsächlich voranschreitet.
+          const t0 = performance.now()
+          const startTime = other.currentTime
           await other.play()
-        })().catch((err) => console.warn('Übergang: nächster Clip startet nicht', err)))
+          const latency = await whenRunning(other, 700, t0, startTime)
+          SequencePlayer.lead = nextLead(SequencePlayer.lead, latency)
+          nextRunning = true
+        })().catch((err) => console.warn('Nächster Clip startet nicht', err)))
 
       // Bis zum Ende dieses Clips laufen lassen (inkl. Übergang).
       // Wichtig: Die Frame-Schleife muss in *jedem* Fall beendet werden – auch
@@ -177,42 +184,53 @@ export class SequencePlayer {
           resolve()
         }
         el.addEventListener('ended', end)
-        const stop = onEachFrame(el, (t) => {
-          if (finished) return false
-          if (!alive()) {
-            end()
-            return false
-          }
-          const inTransition = di > 0 && t >= transitionStart - END_EPSILON
-          if (inTransition) void startNext()
-          const p = inTransition ? clamp((t - transitionStart) / di, 0, 1) : 0
-          this.#cb.onFrame?.({ from: el, to: inTransition ? other : null, p, fromIndex: i, type: inTransition ? type : 'none' })
-          this.#cb.onTime?.(starts[i]! + Math.max(0, t - clip.trimStart))
-          if (t >= clip.trimEnd - END_EPSILON) {
-            end()
-            return false
-          }
-          return true
-        })
+        const stop = onEachFrame(
+          el,
+          (t) => {
+            if (finished) return false
+            if (!alive()) {
+              end()
+              return false
+            }
+            const inTransition = di > 0 && t >= transitionStart - END_EPSILON
+            // Vorlauf: nächsten Clip so früh starten, dass er beim Schnitt bzw.
+            // Übergangsbeginn bereits läuft.
+            if (next && t >= transitionStart - SequencePlayer.lead * LEAD_SAFETY) void startNext()
+            const p = inTransition ? clamp((t - transitionStart) / di, 0, 1) : 0
+            this.#cb.onFrame?.({
+              from: el,
+              to: inTransition ? other : null,
+              p,
+              fromIndex: i,
+              type: inTransition ? type : 'none',
+            })
+            this.#cb.onTime?.(starts[i]! + Math.max(0, t - clip.trimStart))
+            if (t >= clip.trimEnd - END_EPSILON) {
+              end()
+              return false
+            }
+            return true
+          },
+          { clock: 'raf' },
+        )
         this.#stopLoop = end
       })
       if (!alive()) return
 
-      el.pause() // letzter Frame bleibt stehen
-      if (!next) break
-
-      if (di > 0) {
-        await startNext() // läuft normalerweise schon
-      } else {
-        if (preparing) await preparing
-        if (!alive()) return
-        try {
-          await other.play()
-        } catch (err) {
-          console.warn('Wiedergabe des nächsten Clips blockiert', err)
-          break
-        }
-        await firstFrame(other)
+      if (!next) {
+        el.pause()
+        break
+      }
+      // Harter Schnitt: Läuft der nächste Clip schon (Vorlauf), sofort umschalten.
+      // Sonst bleibt der letzte Frame stehen, bis er anläuft – nie Schwarzbild.
+      if (!nextRunning) {
+        el.pause()
+        await startNext()
+      }
+      el.pause()
+      if (!nextRunning && alive()) {
+        console.warn('Nächster Clip läuft nicht – Wiedergabe endet')
+        break
       }
       if (!alive()) return
       active = active === 0 ? 1 : 0

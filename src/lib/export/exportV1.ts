@@ -29,6 +29,10 @@ export interface RenderOptions {
   /** true = Export (MediaRecorder, stumm), false = Vorschau mit Ton. */
   record: boolean
   onProgress?: (t: number) => void
+  /** Erster Frame ist gezeichnet (z. B. um die Vorschau umzuschalten). */
+  onReady?: () => void
+  /** Pro Frame: welcher Clip gerade läuft, Fortschritt im Übergang. */
+  onFrame?: (f: FrameState) => void
 }
 
 export interface RenderResult {
@@ -49,8 +53,9 @@ export interface RenderJob {
  */
 export function startRender(opts: RenderOptions): RenderJob {
   const { clips, renderer, videos, audio, record } = opts
+  // Kein clear(): Ein evtl. vorgerendertes erstes Bild bleibt stehen, bis der
+  // erste echte Frame kommt. Die Aufnahme startet ohnehin erst mit onReady.
   renderer.setOutput(opts.aspect)
-  renderer.clear()
 
   let frame: FrameState | null = null
   let recorder: MediaRecorder | null = null
@@ -154,9 +159,12 @@ export function startRender(opts: RenderOptions): RenderJob {
     onFrame: (f) => {
       frame = f
       applyGains(f)
+      opts.onFrame?.(f)
     },
     onReady: () => {
       clearTimeout(firstFrameTimer)
+      drawCurrent()
+      opts.onReady?.()
       if (record && !recorder) {
         drawCurrent()
         try {

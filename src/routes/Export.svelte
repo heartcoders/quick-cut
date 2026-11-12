@@ -14,6 +14,7 @@
   import AspectPicker from '../ui/AspectPicker.svelte'
   import { formatPrecise } from '../ui/format'
   import Screen from '../ui/Screen.svelte'
+  import SourceVideos from '../ui/SourceVideos.svelte'
   import { toasts } from '../ui/toast.svelte'
 
   type Phase = 'ready' | 'preview' | 'exporting' | 'done' | 'error'
@@ -28,7 +29,7 @@
   let stage: HTMLDivElement | undefined = $state()
   let videoA: HTMLVideoElement | undefined = $state()
   let videoB: HTMLVideoElement | undefined = $state()
-  let renderer: Renderer | null = null
+  let renderer = $state.raw<Renderer | null>(null)
   let audio: AudioGraph | null = null
   let job: RenderJob | null = null
   let releaseWakeLock: (() => void) | null = null
@@ -63,6 +64,11 @@
     return () => (cancelled = true)
   })
 
+  // Canvas in die Bühne hängen – auch nach „Neu exportieren“, wenn die Bühne neu entsteht.
+  $effect(() => {
+    if (stage && renderer && renderer.canvas.parentElement !== stage) stage.append(renderer.canvas)
+  })
+
   // Standbild im gewählten Format (t = 0) zeigen.
   $effect(() => {
     const clips = renderClips
@@ -76,7 +82,6 @@
     try {
       renderer = createRenderer()
       renderer.canvas.classList.add('stage-canvas')
-      stage?.append(renderer.canvas)
     } catch (err) {
       console.error(err)
       phase = 'error'
@@ -252,11 +257,7 @@
       {/if}
     {/if}
 
-    <!-- Quellen für den Renderer: eingehängt, aber unsichtbar (iOS dekodiert sonst nicht). -->
-    <!-- svelte-ignore a11y_media_has_caption -->
-    <video bind:this={videoA} class="source" playsinline preload="auto"></video>
-    <!-- svelte-ignore a11y_media_has_caption -->
-    <video bind:this={videoB} class="source" playsinline preload="auto"></video>
+    <SourceVideos bind:a={videoA} bind:b={videoB} />
   </div>
 </Screen>
 
@@ -320,14 +321,5 @@
     height: 100%;
     background: var(--accent);
     transition: width 120ms linear;
-  }
-  .source {
-    position: fixed;
-    left: 0;
-    top: 0;
-    width: 1px;
-    height: 1px;
-    opacity: 0;
-    pointer-events: none;
   }
 </style>
