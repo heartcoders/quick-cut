@@ -172,3 +172,9 @@ export function moveHandle(
   const v = round2(clamp(t, lo, clip.duration))
   return { trimStart: clip.trimStart, trimEnd: v, hitLimit: t >= clip.duration || t <= lo }
 }
+
+/** Equal-Power-Überblendung: Lautheit bleibt im Übergang konstant. [alt, neu] */
+export function equalPowerGains(p: number): [number, number] {
+  const x = (clamp(p, 0, 1) * Math.PI) / 2
+  return [Math.cos(x), Math.sin(x)]
+}

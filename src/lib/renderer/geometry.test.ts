@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { coverCrop, outputSize } from './geometry'
+import { coverCrop, isFrameReady, outputSize, sourceSize } from './geometry'
 
 describe('outputSize', () => {
   it.each([
@@ -39,5 +39,14 @@ describe('coverCrop', () => {
   })
   it('ungültige Größen → neutral', () => {
     expect(coverCrop(0, 0, 1080, 1920)).toEqual({ scale: 1, uvScale: [1, 1], uvOffset: [0, 0] })
+  })
+})
+
+describe('sourceSize / isFrameReady', () => {
+  it('Canvas-artige Quellen', () => {
+    const c = { width: 320, height: 240 } as unknown as HTMLCanvasElement
+    expect(sourceSize(c)).toEqual({ width: 320, height: 240 })
+    expect(isFrameReady(c)).toBe(true)
+    expect(isFrameReady({ width: 0, height: 0 } as unknown as HTMLCanvasElement)).toBe(false)
   })
 })

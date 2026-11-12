@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   clipStartTimes,
   effectiveDurations,
+  equalPowerGains,
   maxTransition,
   moveHandle,
   pxToTime,
@@ -123,5 +124,15 @@ describe('Übergänge', () => {
       expect(resolveFrame(clips, t, 10)!.from).toEqual({ index: 2, localTime: 3 })
       expect(resolveFrame(clips, t, 10.1)).toBeNull()
     })
+  })
+})
+
+describe('equalPowerGains', () => {
+  it('Start, Mitte, Ende', () => {
+    expect(equalPowerGains(0)).toEqual([1, 0])
+    const [a, b] = equalPowerGains(0.5)
+    expect(a).toBeCloseTo(Math.SQRT1_2)
+    expect(a * a + b * b).toBeCloseTo(1)
+    expect(equalPowerGains(1)[0]).toBeCloseTo(0)
   })
 })

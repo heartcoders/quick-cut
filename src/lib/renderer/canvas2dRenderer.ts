@@ -1,10 +1,7 @@
 import type { TransitionType } from '../timeline/timeline'
 import { BaseRenderer } from './baseRenderer'
-import { coverCrop, easeInOut } from './geometry'
+import { coverCrop, easeInOut, isFrameReady, sourceSize, type FrameSource } from './geometry'
 
-function isReady(v: HTMLVideoElement): boolean {
-  return v.readyState >= 2 && v.videoWidth > 0
-}
 
 /** Fallback ohne WebGL2: gleiche Cover-Logik und gleiche Übergänge per Canvas 2D. */
 export class Canvas2DRenderer extends BaseRenderer {
@@ -17,34 +14,35 @@ export class Canvas2DRenderer extends BaseRenderer {
   }
 
   /** Zeichnet ein Video formatfüllend, optional horizontal versetzt (dx in Pixeln). */
-  #cover(video: HTMLVideoElement, rotation: number, dx = 0) {
+  #cover(video: FrameSource, rotation: number, dx = 0) {
     const { width: W, height: H } = this.canvas
-    const { scale } = coverCrop(video.videoWidth, video.videoHeight, W, H, rotation)
+    const size = sourceSize(video)
+    const { scale } = coverCrop(size.width, size.height, W, H, rotation)
     const ctx = this.#ctx
     ctx.save()
     ctx.translate(W / 2 + dx, H / 2)
     ctx.rotate((rotation * Math.PI) / 180)
-    const w = video.videoWidth * scale
-    const h = video.videoHeight * scale
+    const w = size.width * scale
+    const h = size.height * scale
     ctx.drawImage(video, -w / 2, -h / 2, w, h)
     ctx.restore()
   }
 
-  drawVideo(video: HTMLVideoElement, rotation = 0): void {
-    if (!isReady(video)) return
+  drawVideo(video: FrameSource, rotation = 0): void {
+    if (!isFrameReady(video)) return
     this.#cover(video, rotation)
   }
 
   drawTransition(
-    from: HTMLVideoElement,
-    to: HTMLVideoElement,
+    from: FrameSource,
+    to: FrameSource,
     p: number,
     type: TransitionType,
     rotFrom = 0,
     rotTo = 0,
   ): void {
-    if (type === 'none' || !isReady(to)) return this.drawVideo(from, rotFrom)
-    if (!isReady(from)) return this.drawVideo(to, rotTo)
+    if (type === 'none' || !isFrameReady(to)) return this.drawVideo(from, rotFrom)
+    if (!isFrameReady(from)) return this.drawVideo(to, rotTo)
     const { width: W, height: H } = this.canvas
     const ctx = this.#ctx
     switch (type) {

@@ -1,5 +1,5 @@
 import { SequencePlayer, type FrameState } from '../media/sequencePlayer'
-import type { TransitionSpec } from '../timeline/timeline'
+import { equalPowerGains, type TransitionSpec } from '../timeline/timeline'
 import { pickRecorderMimeType } from '../platform/mediaFormat'
 import type { AspectRatio } from '../project/types'
 import { EXPORT_FPS } from '../renderer/geometry'
@@ -76,9 +76,10 @@ export function startRender(opts: RenderOptions): RenderJob {
     if (!audio) return
     for (const [i, v] of videos.entries()) {
       const g = gains[i]!
+      const [out, inn] = equalPowerGains(f.p)
       let value = 0
-      if (v === f.from) value = f.to ? Math.cos((f.p * Math.PI) / 2) : 1
-      else if (v === f.to) value = Math.sin((f.p * Math.PI) / 2)
+      if (v === f.from) value = f.to ? out : 1
+      else if (v === f.to) value = inn
       g.gain.value = value
     }
   }

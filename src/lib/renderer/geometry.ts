@@ -47,3 +47,24 @@ export function coverCrop(
 export function easeInOut(p: number): number {
   return p * p * (3 - 2 * p)
 }
+
+/** Alles, was der Renderer zeichnen kann: <video> (Echtzeit) oder dekodierte Frames (Export v2). */
+export type FrameSource = HTMLVideoElement | HTMLCanvasElement | OffscreenCanvas | VideoFrame | ImageBitmap
+
+export function sourceSize(src: FrameSource): { width: number; height: number } {
+  if (typeof HTMLVideoElement !== 'undefined' && src instanceof HTMLVideoElement) {
+    return { width: src.videoWidth, height: src.videoHeight }
+  }
+  if (typeof VideoFrame !== 'undefined' && src instanceof VideoFrame) {
+    return { width: src.displayWidth, height: src.displayHeight }
+  }
+  return { width: (src as HTMLCanvasElement).width, height: (src as HTMLCanvasElement).height }
+}
+
+export function isFrameReady(src: FrameSource): boolean {
+  if (typeof HTMLVideoElement !== 'undefined' && src instanceof HTMLVideoElement) {
+    return src.readyState >= 2 && src.videoWidth > 0
+  }
+  const { width, height } = sourceSize(src)
+  return width > 0 && height > 0
+}

@@ -1,8 +1,13 @@
 import type { AspectRatio } from '../project/types'
 import type { TransitionSpec, TransitionType } from '../timeline/timeline'
+import type { FrameSource } from './geometry'
+
+export type { FrameSource }
 
 export interface RenderClip {
   url: string
+  /** Schlüssel des Original-Blobs (Export v2 dekodiert direkt aus der Datei). */
+  blobKey?: string
   duration: number
   trimStart: number
   trimEnd: number
@@ -29,12 +34,12 @@ export interface Renderer {
   renderFrame(t: number): Promise<void>
   /** Zielgröße passend zum Format setzen. */
   setOutput(aspect: AspectRatio): void
-  /** Zeichnet den aktuellen Frame eines spielenden Videos (Echtzeit-Pfad). */
-  drawVideo(video: HTMLVideoElement, rotation?: number): void
+  /** Zeichnet den aktuellen Frame eines Videos oder eines dekodierten Frames. */
+  drawVideo(video: FrameSource, rotation?: number): void
   /** Übergang zwischen zwei spielenden Videos, p = 0…1. */
   drawTransition(
-    from: HTMLVideoElement,
-    to: HTMLVideoElement,
+    from: FrameSource,
+    to: FrameSource,
     p: number,
     type: TransitionType,
     rotFrom?: number,

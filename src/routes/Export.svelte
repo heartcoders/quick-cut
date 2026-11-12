@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { RenderCancelled, startRender, type RenderJob } from '../lib/export/exportV1'
+  import { exportV2, supportsExportV2 } from '../lib/export/exportV2'
   import { buildRenderClips, plainTransitions } from '../lib/export/renderInput'
   import { canShareFile, isIOS, saveVideo, toFile } from '../lib/platform/save'
   import { acquireWakeLock } from '../lib/platform/wakeLock'
@@ -32,7 +33,24 @@
   let job: RenderJob | null = null
   let releaseWakeLock: (() => void) | null = null
 
+  /** `?export=v1` erzwingt den Echtzeit-Export (Tests, Fehlersuche). */
+  const forceV1 = new URLSearchParams(location.search).get('export') === 'v1'
+  let v2Supported = $state<boolean | null>(null)
+  let v2Failed = $state(false)
+  const useV2 = $derived(!forceV1 && !v2Failed && v2Supported === true)
+
   const aspect = $derived(store.project.outputAspect)
+
+  // Feature-Detection je Format (Encoder-Unterstützung hängt von der Auflösung ab).
+  $effect(() => {
+    const a = aspect
+    if (forceV1) return void (v2Supported = false)
+    let cancelled = false
+    void supportsExportV2(a).then((ok) => {
+      if (!cancelled) v2Supported = ok
+    })
+    return () => (cancelled = true)
+  })
   const total = $derived(store.totalDuration)
   const busy = $derived(phase === 'preview' || phase === 'exporting')
 
@@ -92,6 +110,7 @@
     job?.cancel()
     progress = 0
     phase = record ? 'exporting' : 'preview'
+    if (record && useV2) return runV2()
     // Alles bis hier synchron im Tap (iOS: AudioContext + play()).
     job = startRender({
       clips: renderClips,
@@ -104,8 +123,30 @@
       onProgress: (t) => (progress = t),
     })
     if (record) void acquireWakeLock().then((r) => (releaseWakeLock = r))
+    handle(job.done, false)
+  }
 
-    job.done
+  /** Schnell-Export: Frame für Frame, schneller als Echtzeit, ohne Abspielen. */
+  function runV2() {
+    const ac = new AbortController()
+    job = { done: Promise.resolve(null), cancel: (reason) => ac.abort(new RenderCancelled(reason)) }
+    void acquireWakeLock().then((r) => (releaseWakeLock = r))
+    const done = exportV2({
+      clips: renderClips!,
+      transitions,
+      aspect,
+      renderer: renderer!,
+      signal: ac.signal,
+      onProgress: (t) => (progress = t),
+    }).catch((err) => {
+      // Abbruch über den Signal-Grund weiterreichen (z. B. „App im Hintergrund“).
+      throw ac.signal.aborted && ac.signal.reason instanceof RenderCancelled ? ac.signal.reason : err
+    })
+    handle(done, true)
+  }
+
+  function handle(done: Promise<{ blob: Blob; mimeType: string } | null>, isV2: boolean) {
+    done
       .then((res) => {
         if (!res) {
           phase = 'ready'
@@ -120,6 +161,12 @@
         if (err instanceof RenderCancelled) {
           if (err.message !== 'Abgebrochen') toasts.show(`Export abgebrochen: ${err.message}.`, 'warn')
           phase = 'ready'
+        } else if (isV2) {
+          // Kein automatischer Neustart: v1 braucht einen frischen Tap (iOS-Autoplay).
+          console.error('Export v2 fehlgeschlagen', err)
+          v2Failed = true
+          toasts.show('Schnell-Export nicht möglich – bitte erneut auf „Exportieren“ tippen (Echtzeit-Export).', 'warn', 7000)
+          phase = 'ready'
         } else {
           console.error(err)
           errorText = err instanceof Error ? err.message : String(err)
@@ -130,6 +177,8 @@
         job = null
         releaseWakeLock?.()
         releaseWakeLock = null
+        // Standbild nach dem Export wiederherstellen (v2 hat das Canvas überschrieben).
+        void renderer?.renderFrame(0)
       })
   }
 
@@ -175,13 +224,17 @@
 
       {#if phase === 'exporting'}
         <div class="bar"><div style:width="{(progress / Math.max(0.01, total)) * 100}%"></div></div>
-        <p class="meta">Exportiere … {formatPrecise(progress)} / {formatPrecise(total)} · App bitte offen lassen</p>
+        <p class="meta">
+          {useV2 ? 'Schnell-Export' : 'Exportiere'} … {formatPrecise(progress)} / {formatPrecise(total)} · App bitte offen
+          lassen
+        </p>
         <div class="actions"><button onclick={() => job?.cancel()}>Abbrechen</button></div>
       {:else}
         <AspectPicker value={aspect} onchange={setAspect} disabled={busy} />
         <p class="meta">
           {store.playableClips.length} Clips · {transitions.filter((t) => t.type !== 'none').length} Übergänge ·
-          {formatPrecise(total)} · {aspect} · 1080p
+          {formatPrecise(total)} · {aspect} · 1080p ·
+          <span class="mode">{v2Supported === null ? '…' : useV2 ? 'Schnell-Export' : 'Echtzeit-Export'}</span>
         </p>
         {#if phase === 'error'}
           <p class="error">{errorText}</p>
@@ -240,6 +293,9 @@
     color: var(--muted);
     font-size: 0.85rem;
     font-variant-numeric: tabular-nums;
+  }
+  .mode {
+    color: var(--accent);
   }
   .error {
     margin: 0;

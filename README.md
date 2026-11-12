@@ -25,7 +25,11 @@ npm run build
 
 1. **Aufnahme** (`#/record`): Tippen = Aufnahme bis zum nächsten Tippen, Halten = solange der Finger liegt. Galerie-Button importiert Videos.
 2. **Schneiden** (`#/cut`): Start/Ende per Griff oder ±0,1 s, Clip oder alles abspielen. Zwischen den Clips Übergänge (Überblenden, Schieben, Wischen) wählen – Vorschau und Export laufen über denselben Renderer.
-3. **Export** (`#/export`): Format 9:16 / 1:1 / 16:9 wählen, in Echtzeit exportieren (Canvas + MediaRecorder), dann über das Share Sheet in Fotos sichern bzw. herunterladen.
+3. **Export** (`#/export`): Format 9:16 / 1:1 / 16:9 wählen und exportieren, dann über das Share Sheet in Fotos sichern bzw. herunterladen.
+   - **Schnell-Export (v2):** WebCodecs + Mediabunny, Frame für Frame, deutlich schneller als Echtzeit, H.264 + AAC. Wird automatisch genutzt, wenn der Browser es kann.
+   - **Echtzeit-Export (v1):** Canvas + MediaRecorder als Fallback. Erzwingen mit `?export=v1` in der URL.
+
+Clips lassen sich per **Halten und Ziehen** in der Clip-Leiste umsortieren.
 
 ## Struktur
 
@@ -36,7 +40,7 @@ npm run build
 - `src/lib/import` – Galerie-Import
 - `src/lib/timeline` – Zeitberechnung (resolve, Trim-Griffe)
 - `src/lib/renderer` – WebGL2-Compositor (Fallback Canvas 2D), Audio-Graph
-- `src/lib/export` – Export v1
+- `src/lib/export` – Export v1 (Echtzeit) und v2 (WebCodecs/Mediabunny)
 - `src/lib/platform` – Formatwahl, Teilen/Download, Wake Lock
 - `src/routes` – die drei Screens
 - `src/ui` – gemeinsame UI-Komponenten

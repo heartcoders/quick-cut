@@ -1,6 +1,6 @@
 import type { TransitionType } from '../timeline/timeline'
 import { BaseRenderer } from './baseRenderer'
-import { coverCrop } from './geometry'
+import { coverCrop, isFrameReady, sourceSize, type FrameSource } from './geometry'
 import { COVER_FRAGMENT, transitionFragment, VERTEX } from './shaders'
 
 type ProgramName = 'cover' | Exclude<TransitionType, 'none'>
@@ -20,9 +20,6 @@ function compile(gl: WebGL2RenderingContext, type: number, src: string): WebGLSh
   return sh
 }
 
-function isReady(v: HTMLVideoElement): boolean {
-  return v.readyState >= 2 && v.videoWidth > 0
-}
 
 export class WebGL2Renderer extends BaseRenderer {
   readonly kind = 'webgl2' as const
@@ -81,9 +78,10 @@ export class WebGL2Renderer extends BaseRenderer {
     return p
   }
 
-  #upload(unit: 0 | 1, video: HTMLVideoElement, rotation: number, prog: Prog) {
+  #upload(unit: 0 | 1, video: FrameSource, rotation: number, prog: Prog) {
     const gl = this.#gl
-    const c = coverCrop(video.videoWidth, video.videoHeight, this.canvas.width, this.canvas.height, rotation)
+    const size = sourceSize(video)
+    const c = coverCrop(size.width, size.height, this.canvas.width, this.canvas.height, rotation)
     const s = unit === 0 ? 'A' : 'B'
     gl.activeTexture(unit === 0 ? gl.TEXTURE0 : gl.TEXTURE1)
     gl.bindTexture(gl.TEXTURE_2D, this.#tex[unit])
@@ -98,23 +96,23 @@ export class WebGL2Renderer extends BaseRenderer {
     this.#gl.viewport(0, 0, w, h)
   }
 
-  drawVideo(video: HTMLVideoElement, rotation = 0): void {
-    if (!isReady(video)) return
+  drawVideo(video: FrameSource, rotation = 0): void {
+    if (!isFrameReady(video)) return
     const prog = this.#use('cover')
     this.#upload(0, video, rotation, prog)
     this.#gl.drawArrays(this.#gl.TRIANGLE_STRIP, 0, 4)
   }
 
   drawTransition(
-    from: HTMLVideoElement,
-    to: HTMLVideoElement,
+    from: FrameSource,
+    to: FrameSource,
     p: number,
     type: TransitionType,
     rotFrom = 0,
     rotTo = 0,
   ): void {
-    if (type === 'none' || !isReady(to)) return this.drawVideo(from, rotFrom)
-    if (!isReady(from)) return this.drawVideo(to, rotTo)
+    if (type === 'none' || !isFrameReady(to)) return this.drawVideo(from, rotFrom)
+    if (!isFrameReady(from)) return this.drawVideo(to, rotTo)
     const prog = this.#use(type)
     this.#upload(0, from, rotFrom, prog)
     this.#upload(1, to, rotTo, prog)

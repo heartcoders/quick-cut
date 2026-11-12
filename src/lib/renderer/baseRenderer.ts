@@ -1,7 +1,7 @@
 import { once, seekTo } from '../media/video'
 import type { AspectRatio } from '../project/types'
 import { resolveFrame, totalDuration, type TransitionSpec, type TransitionType } from '../timeline/timeline'
-import { outputSize } from './geometry'
+import { outputSize, type FrameSource } from './geometry'
 import type { RenderClip, RenderProject, Renderer } from './types'
 
 function hiddenVideo(): HTMLVideoElement {
@@ -70,10 +70,10 @@ export abstract class BaseRenderer implements Renderer {
   }
 
   protected onResize(_w: number, _h: number): void {}
-  abstract drawVideo(video: HTMLVideoElement, rotation?: number): void
+  abstract drawVideo(video: FrameSource, rotation?: number): void
   abstract drawTransition(
-    from: HTMLVideoElement,
-    to: HTMLVideoElement,
+    from: FrameSource,
+    to: FrameSource,
     p: number,
     type: TransitionType,
     rotFrom?: number,
