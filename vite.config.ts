@@ -9,7 +9,10 @@ import { defineConfig } from 'vitest/config'
 // als sicherer Kontext; Service Worker lassen sich mit selbstsigniertem
 // Zertifikat in Chrome nicht registrieren).
 const https = !process.env.NO_HTTPS
+// BASE_PATH: Unterpfad beim Hosting, z. B. `/quick-cut/` für GitHub Pages.
+const base = process.env.BASE_PATH ?? '/'
 export default defineConfig({
+  base,
   plugins: [
     svelte(),
     ...(https ? [basicSsl()] : []),
@@ -22,8 +25,9 @@ export default defineConfig({
         short_name: 'Quick Cut',
         description: 'Kurze Videos aufnehmen, schneiden und exportieren – komplett auf dem Gerät.',
         lang: 'de',
-        start_url: '/',
-        scope: '/',
+        // Relativ zu `base`, damit die Installation auch unter einem Unterpfad klappt.
+        start_url: './',
+        scope: './',
         display: 'standalone',
         orientation: 'portrait',
         theme_color: '#000000',
@@ -38,7 +42,7 @@ export default defineConfig({
       workbox: {
         // App-Shell offline verfügbar; Clips liegen ohnehin lokal in IndexedDB.
         globPatterns: ['**/*.{js,css,html,svg,png,ico,webmanifest}'],
-        navigateFallback: '/index.html',
+        navigateFallback: 'index.html',
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
       },
       devOptions: { enabled: false },

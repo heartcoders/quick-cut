@@ -1,6 +1,30 @@
 # Quick Cut
 
-Mobile-first Web App zum Aufnehmen, Importieren, Schneiden und Exportieren kurzer Videos – komplett lokal im Browser (Vite + Svelte 5 + TypeScript, kein Backend).
+Mobile-first Web-App zum Aufnehmen, Importieren, Schneiden und Exportieren kurzer Videos. Läuft komplett lokal im Browser: kein Backend, kein Upload, kein Account.
+
+**▶ Live-Demo: [heartcoders.github.io/quick-cut](https://heartcoders.github.io/quick-cut/)** (am besten auf dem Handy öffnen und „Zum Home-Bildschirm“ hinzufügen)
+
+Gebaut mit Vite, Svelte 5 und TypeScript.
+
+## Features
+
+- **Aufnahme** mit Front-/Rückkamera: Tippen startet und stoppt, Halten nimmt auf, solange der Finger liegt
+- **Import** aus der Galerie
+- **Schneiden** mit Trim-Griffen oder in ±0,1-s-Schritten, Clips per Halten und Ziehen umsortieren
+- **Bildausschnitt** pro Clip verschieben, Format 9:16, 1:1 oder 16:9
+- **Übergänge**: Überblenden, Schieben, Wischen
+- **Export** als MP4 (1080p, H.264 + AAC), danach Teilen bzw. Sichern in Fotos oder Download
+- **PWA**: installierbar und offline nutzbar
+
+## Datenschutz
+
+Videos verlassen nie das Gerät. Clips und Projekt liegen in der IndexedDB des Browsers, Rendering und Export laufen lokal (WebGL2 / WebCodecs).
+
+## Browser-Anforderungen
+
+- **HTTPS** ist Pflicht, sonst blockiert der Browser die Kamera (GitHub Pages und der Dev-Server liefern HTTPS).
+- **Schnell-Export** braucht WebCodecs mit H.264/AAC-Encoder. Fehlt der, wird automatisch der Echtzeit-Export über MediaRecorder genutzt.
+- Optimiert für Safari auf iOS, läuft aber auch in aktuellen Chromium-Browsern.
 
 ## Entwicklung
 
@@ -12,35 +36,58 @@ npm run check    # svelte-check + TypeScript
 npm run build
 ```
 
-**Test auf dem Handy:** `npm run dev` zeigt eine `Network`-URL (`https://<LAN-IP>:5173`). Auf dem Handy öffnen und die Warnung zum selbstsignierten Zertifikat einmal bestätigen. HTTPS ist Pflicht, sonst blockiert der Browser die Kamera.
+**Test auf dem Handy:** `npm run dev` zeigt eine `Network`-URL (`https://<LAN-IP>:5173`). Diese auf dem Handy öffnen und die Warnung zum selbstsignierten Zertifikat einmal bestätigen.
+
+Nützliche URL-Parameter:
+
+- `?debug=1` zeigt Diagnose-Infos (Kamera, Wiedergabe, Audiopegel)
+- `?export=v1` erzwingt den Echtzeit-Export
 
 ## Installation als App (PWA)
 
-`npm run build` erzeugt Manifest, Icons und Service Worker (App-Shell offline). Damit der Service Worker auf dem Handy aktiv wird, braucht es ein **vertrauenswürdiges** HTTPS-Zertifikat (echtes Hosting oder `mkcert`); mit dem selbstsignierten Dev-Zertifikat registriert der Browser keinen Service Worker. „Zum Home-Bildschirm“ funktioniert auf iOS trotzdem.
+`npm run build` erzeugt Manifest, Icons und Service Worker (App-Shell offline). Damit der Service Worker aktiv wird, braucht es ein **vertrauenswürdiges** HTTPS-Zertifikat, also echtes Hosting oder `mkcert`. Mit dem selbstsignierten Dev-Zertifikat registriert der Browser keinen Service Worker. „Zum Home-Bildschirm“ funktioniert auf iOS trotzdem.
 
 - Icons neu erzeugen: `npm run icons` (Quelle `public/logo.svg`)
 - Tests ohne HTTPS auf `http://localhost`: `NO_HTTPS=1 npm run preview`
 
+## Deployment (GitHub Pages)
+
+Bei jedem Push auf `main` testet und baut `.github/workflows/deploy.yml` die App und veröffentlicht sie auf GitHub Pages. Dafür in den Repo-Einstellungen unter **Settings → Pages → Source** einmalig „GitHub Actions“ wählen.
+
+Den Unterpfad setzt die Umgebungsvariable `BASE_PATH` (im Workflow automatisch `/<repo-name>/`). Für einen lokalen Build mit Unterpfad:
+
+```bash
+BASE_PATH=/quick-cut/ npm run build
+```
+
+Die App nutzt einen Hash-Router (`#/record`, `#/cut`, `#/export`) und läuft deshalb auf jedem statischen Hosting ohne Rewrite-Regeln.
+
 ## Ablauf
 
-1. **Aufnahme** (`#/record`): Tippen = Aufnahme bis zum nächsten Tippen, Halten = solange der Finger liegt. Galerie-Button importiert Videos.
-2. **Schneiden** (`#/cut`): Start/Ende per Griff oder ±0,1 s, Clip oder alles abspielen. Zwischen den Clips Übergänge (Überblenden, Schieben, Wischen) wählen – Vorschau und Export laufen über denselben Renderer.
-3. **Export** (`#/export`): Format 9:16 / 1:1 / 16:9 wählen und exportieren, dann über das Share Sheet in Fotos sichern bzw. herunterladen.
-   - **Schnell-Export (v2):** WebCodecs + Mediabunny, Frame für Frame, deutlich schneller als Echtzeit, H.264 + AAC. Wird automatisch genutzt, wenn der Browser es kann.
-   - **Echtzeit-Export (v1):** Canvas + MediaRecorder als Fallback. Erzwingen mit `?export=v1` in der URL.
-
-Clips lassen sich per **Halten und Ziehen** in der Clip-Leiste umsortieren.
+1. **Aufnahme** (`#/record`): Tippen nimmt bis zum nächsten Tippen auf, Halten nimmt auf, solange der Finger liegt. Der Galerie-Button importiert Videos.
+2. **Schneiden** (`#/cut`): Format wählen, Start und Ende per Griff oder ±0,1 s setzen, Ausschnitt per Ziehen verschieben, Clip oder alles abspielen. Zwischen den Clips lassen sich Übergänge wählen. Vorschau und Export laufen über denselben Renderer.
+3. **Export** (`#/export`): exportieren, dann über das Share Sheet in Fotos sichern bzw. herunterladen.
+   - **Schnell-Export (v2):** WebCodecs + Mediabunny rechnen Frame für Frame, deutlich schneller als Echtzeit.
+   - **Echtzeit-Export (v1):** Canvas + MediaRecorder als Fallback.
 
 ## Struktur
 
-- `src/lib/project` – Typen, IndexedDB (`idb`), Projekt-Store (Runes)
-- `src/lib/router.svelte.ts` – Hash-Router (`#/record`, `#/cut`, `#/export`)
-- `src/lib/capture` – Kamera, MediaRecorder, Record-Button (Zustandsmaschine)
-- `src/lib/media` – Probe, Filmstreifen, Pipeline, Player (Trim-Bereich, A/B-Sequenz)
-- `src/lib/import` – Galerie-Import
-- `src/lib/timeline` – Zeitberechnung (resolve, Trim-Griffe)
-- `src/lib/renderer` – WebGL2-Compositor (Fallback Canvas 2D), Audio-Graph
-- `src/lib/export` – Export v1 (Echtzeit) und v2 (WebCodecs/Mediabunny)
-- `src/lib/platform` – Formatwahl, Teilen/Download, Wake Lock
-- `src/routes` – die drei Screens
-- `src/ui` – gemeinsame UI-Komponenten
+- `src/lib/project`: Typen, IndexedDB (`idb`), Projekt-Store (Runes)
+- `src/lib/router.svelte.ts`: Hash-Router
+- `src/lib/capture`: Kamera, MediaRecorder, Record-Button (Zustandsmaschine)
+- `src/lib/media`: Probe, Filmstreifen, Pipeline, Player (Trim-Bereich, A/B-Sequenz), Clip-Audio
+- `src/lib/import`: Galerie-Import
+- `src/lib/timeline`: Zeitberechnung (resolve, Trim-Griffe, Audio-Planung)
+- `src/lib/renderer`: WebGL2-Compositor (Fallback Canvas 2D), Audio-Graph
+- `src/lib/export`: Export v1 (Echtzeit) und v2 (WebCodecs/Mediabunny)
+- `src/lib/platform`: Formatwahl, Teilen/Download, Wake Lock
+- `src/routes`: die drei Screens
+- `src/ui`: gemeinsame UI-Komponenten
+
+## Mitmachen
+
+Issues und Pull Requests sind willkommen. Vor einem PR bitte `npm test` und `npm run check` laufen lassen.
+
+## Lizenz
+
+[MIT](LICENSE) © 2026 Philipp Jordan
