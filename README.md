@@ -14,6 +14,13 @@ npm run build
 
 **Test auf dem Handy:** `npm run dev` zeigt eine `Network`-URL (`https://<LAN-IP>:5173`). Auf dem Handy öffnen und die Warnung zum selbstsignierten Zertifikat einmal bestätigen. HTTPS ist Pflicht, sonst blockiert der Browser die Kamera.
 
+## Installation als App (PWA)
+
+`npm run build` erzeugt Manifest, Icons und Service Worker (App-Shell offline). Damit der Service Worker auf dem Handy aktiv wird, braucht es ein **vertrauenswürdiges** HTTPS-Zertifikat (echtes Hosting oder `mkcert`); mit dem selbstsignierten Dev-Zertifikat registriert der Browser keinen Service Worker. „Zum Home-Bildschirm“ funktioniert auf iOS trotzdem.
+
+- Icons neu erzeugen: `npm run icons` (Quelle `public/logo.svg`)
+- Tests ohne HTTPS auf `http://localhost`: `NO_HTTPS=1 npm run preview`
+
 ## Ablauf
 
 1. **Aufnahme** (`#/record`): Tippen = Aufnahme bis zum nächsten Tippen, Halten = solange der Finger liegt. Galerie-Button importiert Videos.
