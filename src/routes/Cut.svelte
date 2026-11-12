@@ -272,6 +272,7 @@
       selectedId={clip?.id ?? null}
       onselect={select}
       ontransition={openTransition}
+      reorderable={mode === 'idle'}
       activeTransition={sheetIndex}
     />
   </div>

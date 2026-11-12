@@ -3,6 +3,7 @@
   import { UNPLAYABLE_HINT } from '../lib/import/importFiles'
   import { store } from '../lib/project/store.svelte'
   import type { Clip } from '../lib/project/types'
+  import { targetIndex } from '../lib/timeline/reorder'
   import { formatShort } from './format'
   import { toasts } from './toast.svelte'
 
@@ -12,6 +13,7 @@
     removable = true,
     ontransition,
     activeTransition = null,
+    reorderable = false,
   }: {
     selectedId?: string | null
     onselect?: (id: string) => void
@@ -19,7 +21,106 @@
     /** Gesetzt → zwischen den Clips erscheinen Übergangs-Knöpfe. */
     ontransition?: (index: number) => void
     activeTransition?: number | null
+    /** Halten (350 ms) und Ziehen ändert die Reihenfolge. */
+    reorderable?: boolean
   } = $props()
+
+  const HOLD_MS = 350
+  const MOVE_TOLERANCE = 8
+  const EDGE = 40
+
+  interface Drag {
+    from: number
+    to: number
+    dx: number
+    pitch: number
+    centers: number[]
+    startX: number
+  }
+  let drag = $state<Drag | null>(null)
+  let pending: { i: number; x: number; y: number; id: number; el: HTMLElement; timer: ReturnType<typeof setTimeout> } | null =
+    null
+  let suppressClick = false
+
+  /** x in Inhaltskoordinaten der Leiste (berücksichtigt Scrollposition). */
+  function contentX(clientX: number): number {
+    if (!scroller) return clientX
+    return clientX - scroller.getBoundingClientRect().left + scroller.scrollLeft
+  }
+
+  function onTileDown(i: number, e: PointerEvent) {
+    if (!reorderable || !e.isPrimary || drag) return
+    const el = e.currentTarget as HTMLElement
+    pending = { i, x: e.clientX, y: e.clientY, id: e.pointerId, el, timer: setTimeout(() => startDrag(), HOLD_MS) }
+  }
+
+  function startDrag() {
+    if (!pending || !scroller) return
+    const tiles = [...scroller.querySelectorAll<HTMLElement>('.tile')]
+    const rects = tiles.map((t) => t.getBoundingClientRect())
+    const base = scroller.getBoundingClientRect().left - scroller.scrollLeft
+    const centers = rects.map((r) => r.left - base + r.width / 2)
+    const pitch = centers.length > 1 ? centers[1]! - centers[0]! : (rects[0]?.width ?? 48)
+    try {
+      pending.el.setPointerCapture(pending.id)
+    } catch {
+      /* Pointer schon weg */
+    }
+    navigator.vibrate?.(15)
+    drag = { from: pending.i, to: pending.i, dx: 0, pitch, centers, startX: contentX(pending.x) }
+    pending = null
+  }
+
+  function cancelPending() {
+    if (pending) clearTimeout(pending.timer)
+    pending = null
+  }
+
+  function onTileMove(e: PointerEvent) {
+    if (pending && Math.hypot(e.clientX - pending.x, e.clientY - pending.y) > MOVE_TOLERANCE) cancelPending()
+    if (!drag || !scroller) return
+    // Am Rand automatisch scrollen.
+    const r = scroller.getBoundingClientRect()
+    if (e.clientX < r.left + EDGE) scroller.scrollLeft -= 8
+    else if (e.clientX > r.right - EDGE) scroller.scrollLeft += 8
+    const x = contentX(e.clientX)
+    drag.dx = x - drag.startX
+    drag.to = targetIndex(drag.centers[drag.from]! + drag.dx, drag.centers, drag.from)
+  }
+
+  function onTileUp() {
+    cancelPending()
+    if (!drag) return
+    const { from, to } = drag
+    drag = null
+    suppressClick = true
+    setTimeout(() => (suppressClick = false), 0)
+    store.moveClip(from, to)
+  }
+
+  function onTileCancel() {
+    cancelPending()
+    drag = null
+  }
+
+  /** Verschiebung der übrigen Kacheln, damit die Lücke an der Zielposition entsteht. */
+  function shiftFor(i: number, d: Drag): number {
+    if (i === d.from) return d.dx
+    if (d.from < d.to && i > d.from && i <= d.to) return -d.pitch
+    if (d.to < d.from && i >= d.to && i < d.from) return d.pitch
+    return 0
+  }
+
+  // Während des Ziehens darf die Leiste nicht scrollen (iOS/Android): nicht-passiver touchmove.
+  $effect(() => {
+    const el = scroller
+    if (!el || !reorderable) return
+    const block = (e: TouchEvent) => {
+      if (drag) e.preventDefault()
+    }
+    el.addEventListener('touchmove', block, { passive: false })
+    return () => el.removeEventListener('touchmove', block)
+  })
 
   const ICONS: Record<string, string> = { none: '│', crossfade: '◐', slide: '⇤', wipe: '▧' }
   const LABELS: Record<string, string> = { none: 'kein Übergang', crossfade: 'Überblenden', slide: 'Schieben', wipe: 'Wischen' }
@@ -28,6 +129,7 @@
   let lastCount = 0
 
   function select(clip: Clip) {
+    if (suppressClick) return
     if (clip.status === 'error') toasts.show(UNPLAYABLE_HINT, 'error', 7000)
     else if (clip.status === 'ready') onselect?.(clip.id)
   }
@@ -42,9 +144,20 @@
   })
 </script>
 
-<div class="strip" bind:this={scroller}>
+<div class="strip" class:dragging={drag !== null} bind:this={scroller}>
   {#each store.project.clips as clip, i (clip.id)}
-    <div class="tile" class:selected={clip.id === selectedId} class:error={clip.status === 'error'}>
+    <div
+      class="tile"
+      class:selected={clip.id === selectedId}
+      class:error={clip.status === 'error'}
+      class:lifted={drag?.from === i}
+      style:transform={drag ? `translateX(${shiftFor(i, drag)}px)${drag.from === i ? ' scale(1.08)' : ''}` : undefined}
+      onpointerdown={(e) => onTileDown(i, e)}
+      onpointermove={onTileMove}
+      onpointerup={onTileUp}
+      onpointercancel={onTileCancel}
+      role="listitem"
+    >
       <button
         class="thumb"
         onclick={() => select(clip)}
@@ -96,6 +209,22 @@
   .tile {
     position: relative;
     flex: 0 0 auto;
+    -webkit-touch-callout: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .dragging .tile {
+    transition: transform 150ms ease;
+  }
+  .dragging .tile.lifted {
+    transition: none;
+    z-index: 5;
+    filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.6));
+  }
+  .dragging .transition,
+  .dragging .remove {
+    opacity: 0;
+    pointer-events: none;
   }
   .thumb {
     position: relative;

@@ -1,4 +1,5 @@
 import { releaseClipUrl } from '../media/clipUrls'
+import { arrayMove } from '../timeline/reorder'
 import { maxTransition, totalDuration } from '../timeline/timeline'
 import * as db from './db'
 import { newId } from './id'
@@ -107,6 +108,17 @@ class ProjectStore {
     if (!clip) return
     if (patch.thumbnails) revokeAll(clip.thumbnails.filter((u) => !patch.thumbnails!.includes(u)))
     Object.assign(clip, patch)
+    this.scheduleSave()
+  }
+
+  /**
+   * Reihenfolge ändern. Übergänge bleiben an ihrer Position (Übergang 1→2
+   * bleibt zwischen Platz 1 und 2) und werden über die Timeline automatisch
+   * auf die neuen Nachbarn begrenzt.
+   */
+  moveClip(from: number, to: number): void {
+    if (from === to) return
+    this.project.clips = arrayMove(this.project.clips, from, to)
     this.scheduleSave()
   }
 

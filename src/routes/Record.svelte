@@ -125,7 +125,7 @@
 
   <footer>
     {#if store.hasClips}
-      <ClipStrip removable={!isRecording} />
+      <ClipStrip removable={!isRecording} reorderable={!isRecording} />
     {/if}
     <div class="controls">
       <button

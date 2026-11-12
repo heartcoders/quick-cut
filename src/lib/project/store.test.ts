@@ -138,3 +138,19 @@ describe('Übergänge im Store', () => {
     expect(store.totalDuration).toBe(7.5)
   })
 })
+
+describe('moveClip', () => {
+  it('verschiebt Clips, Übergänge bleiben positionsgebunden und überleben einen Reload', async () => {
+    store.addClip(rec('a'))
+    store.addClip(rec('b', { duration: 1, trimEnd: 1 }))
+    store.addClip(rec('c'))
+    store.setTransition(1, { type: 'wipe', duration: 1.5 }) // b→c, max 0,5
+    store.moveClip(1, 2) // a, c, b
+    expect(store.project.clips.map((c) => c.id)).toEqual(['a', 'c', 'b'])
+    expect(store.project.transitions[1]!.type).toBe('wipe')
+    await store.flush()
+    store._reset()
+    await store.load()
+    expect(store.project.clips.map((c) => c.id)).toEqual(['a', 'c', 'b'])
+  })
+})
