@@ -7,12 +7,10 @@
   import { canShareFile, isIOS, saveVideo, toFile } from '../lib/platform/save'
   import { acquireWakeLock } from '../lib/platform/wakeLock'
   import { store } from '../lib/project/store.svelte'
-  import type { AspectRatio } from '../lib/project/types'
   import { AudioGraph } from '../lib/renderer/audioGraph'
   import { createRenderer } from '../lib/renderer/createRenderer'
   import type { RenderClip, Renderer } from '../lib/renderer/types'
   import { router } from '../lib/router.svelte'
-  import AspectPicker from '../ui/AspectPicker.svelte'
   import { formatPrecise } from '../ui/format'
   import Screen from '../ui/Screen.svelte'
   import SourceVideos from '../ui/SourceVideos.svelte'
@@ -202,10 +200,6 @@
     }
   }
 
-  function setAspect(a: AspectRatio) {
-    store.setAspect(a)
-  }
-
   function again() {
     if (result) URL.revokeObjectURL(result.url)
     result = null
@@ -238,7 +232,6 @@
         </p>
         <div class="actions"><button onclick={() => job?.cancel()}>Abbrechen</button></div>
       {:else}
-        <AspectPicker value={aspect} onchange={setAspect} disabled={busy} />
         <p class="meta">
           {store.playableClips.length} Clips · {transitions.filter((t) => t.type !== 'none').length} Übergänge ·
           {formatPrecise(total)} · {aspect} · 1080p ·

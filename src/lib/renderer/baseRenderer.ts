@@ -1,7 +1,7 @@
 import { once, seekTo } from '../media/video'
 import type { AspectRatio } from '../project/types'
 import { resolveFrame, totalDuration, type TransitionSpec, type TransitionType } from '../timeline/timeline'
-import { outputSize, type FrameSource } from './geometry'
+import { outputSize, type FrameSource, type Placement } from './geometry'
 import type { RenderClip, RenderProject, Renderer } from './types'
 
 function hiddenVideo(): HTMLVideoElement {
@@ -63,21 +63,21 @@ export abstract class BaseRenderer implements Renderer {
     if (f.to) {
       const to = this.#clips[f.to.index]!
       await showAt(b, to, f.to.localTime)
-      this.drawTransition(a, b, f.p, f.type, from.rotation, to.rotation)
+      this.drawTransition(a, b, f.p, f.type, from, to)
     } else {
-      this.drawVideo(a, from.rotation)
+      this.drawVideo(a, from)
     }
   }
 
   protected onResize(_w: number, _h: number): void {}
-  abstract drawVideo(video: FrameSource, rotation?: number): void
+  abstract drawVideo(video: FrameSource, place?: Placement): void
   abstract drawTransition(
     from: FrameSource,
     to: FrameSource,
     p: number,
     type: TransitionType,
-    rotFrom?: number,
-    rotTo?: number,
+    placeFrom?: Placement,
+    placeTo?: Placement,
   ): void
   abstract clear(): void
 

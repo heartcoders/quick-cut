@@ -37,6 +37,19 @@ describe('coverCrop', () => {
     // Querformat-Datei mit 90° Rotation verhält sich wie Hochformat
     expect(coverCrop(1920, 1080, 1080, 1920, 90).uvScale).toEqual([1, 1])
   })
+  it('pan verschiebt den Ausschnitt', () => {
+    const left = coverCrop(1920, 1080, 1080, 1920, 0, 0)
+    const right = coverCrop(1920, 1080, 1080, 1920, 0, 1)
+    expect(left.uvOffset[0]).toBe(0)
+    expect(right.uvOffset[0]).toBeCloseTo(1 - right.uvScale[0])
+    const top = coverCrop(1080, 1920, 1920, 1080, 0, 0.5, 0)
+    const bottom = coverCrop(1080, 1920, 1920, 1080, 0, 0.5, 1)
+    expect(top.uvOffset[1]).toBe(0)
+    expect(bottom.uvOffset[1]).toBeCloseTo(1 - bottom.uvScale[1])
+  })
+  it('pan ohne Überstand ändert nichts', () => {
+    expect(coverCrop(720, 1280, 1080, 1920, 0, 0, 1).uvOffset).toEqual([0, 0])
+  })
   it('ungültige Größen → neutral', () => {
     expect(coverCrop(0, 0, 1080, 1920)).toEqual({ scale: 1, uvScale: [1, 1], uvOffset: [0, 0] })
   })

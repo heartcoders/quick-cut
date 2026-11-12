@@ -13,7 +13,9 @@
   import { router } from '../lib/router.svelte'
   import { clipStartTimes, effectiveDurations, type Handle } from '../lib/timeline/timeline'
   import { SequencePlayer } from '../lib/media/sequencePlayer'
+  import AspectPicker from '../ui/AspectPicker.svelte'
   import ClipStrip from '../ui/ClipStrip.svelte'
+  import CropFrame from '../ui/CropFrame.svelte'
   import SourceVideos from '../ui/SourceVideos.svelte'
   import { formatPrecise } from '../ui/format'
   import Screen from '../ui/Screen.svelte'
@@ -274,11 +276,21 @@
   {/snippet}
 
   <div class="cut">
+    <AspectPicker value={store.project.outputAspect} onchange={(a) => store.setAspect(a)} disabled={mode === 'all'} />
     <div class="preview">
       <!-- svelte-ignore a11y_media_has_caption -->
       <video bind:this={single} src={clipUrl} playsinline preload="auto" class:hidden={mode === 'all' && canvasReady}
       ></video>
       <div class="stage" class:hidden={mode !== 'all' || !canvasReady} bind:this={stage}></div>
+      {#if clip && mode !== 'all'}
+        <CropFrame
+          video={single}
+          aspect={store.project.outputAspect}
+          panX={clip.panX ?? 0.5}
+          panY={clip.panY ?? 0.5}
+          onchange={(x, y) => store.setPan(clip.id, x, y)}
+        />
+      {/if}
     </div>
     <SourceVideos bind:a={videoA} bind:b={videoB} />
     {#if debug && debugText}

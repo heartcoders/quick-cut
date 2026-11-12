@@ -103,9 +103,9 @@ export function startRender(opts: RenderOptions): RenderJob {
   const drawCurrent = () => {
     const f = frame
     if (!f) return
-    const rotFrom = clips[f.fromIndex]?.rotation ?? 0
-    if (f.to) renderer.drawTransition(f.from, f.to, f.p, f.type, rotFrom, clips[f.fromIndex + 1]?.rotation ?? 0)
-    else renderer.drawVideo(f.from, rotFrom)
+    const from = clips[f.fromIndex]
+    if (f.to) renderer.drawTransition(f.from, f.to, f.p, f.type, from, clips[f.fromIndex + 1])
+    else renderer.drawVideo(f.from, from)
   }
 
   const draw = () => {

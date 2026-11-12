@@ -22,9 +22,21 @@ export interface Cover {
   uvOffset: [number, number]
 }
 
+/** Wie ein Clip ins Zielformat gelegt wird. */
+export interface Placement {
+  rotation: number
+  /** Ausschnitt-Position 0…1 (0.5 = mittig), bezogen auf die gedrehte Quelle. */
+  panX: number
+  panY: number
+}
+
+export const CENTER: Placement = { rotation: 0, panX: 0.5, panY: 0.5 }
+
 /**
- * „Cover“: Ziel vollständig füllen, mittig zuschneiden.
+ * „Cover“: Ziel vollständig füllen und zuschneiden – standardmäßig mittig,
+ * mit panX/panY (0…1) lässt sich der Ausschnitt verschieben.
  * Bei 90°/270° Rotation sind Breite und Höhe der Quelle vertauscht.
+ * uvOffset gilt in Bildkoordinaten (y = 0 oben).
  */
 export function coverCrop(
   srcW: number,
@@ -32,6 +44,8 @@ export function coverCrop(
   dstW: number,
   dstH: number,
   rotation = 0,
+  panX = 0.5,
+  panY = 0.5,
 ): Cover {
   const swap = Math.abs(rotation) % 180 === 90
   const ew = swap ? srcH : srcW
@@ -40,7 +54,7 @@ export function coverCrop(
   const scale = Math.max(dstW / ew, dstH / eh)
   const sx = dstW / scale / ew
   const sy = dstH / scale / eh
-  return { scale, uvScale: [sx, sy], uvOffset: [(1 - sx) / 2, (1 - sy) / 2] }
+  return { scale, uvScale: [sx, sy], uvOffset: [(1 - sx) * panX, (1 - sy) * panY] }
 }
 
 /** Smoothstep-Easing – identisch zum Slide-Shader. */

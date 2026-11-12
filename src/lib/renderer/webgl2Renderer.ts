@@ -1,6 +1,6 @@
 import type { TransitionType } from '../timeline/timeline'
 import { BaseRenderer } from './baseRenderer'
-import { coverCrop, isFrameReady, sourceSize, type FrameSource } from './geometry'
+import { CENTER, coverCrop, isFrameReady, sourceSize, type FrameSource, type Placement } from './geometry'
 import { COVER_FRAGMENT, transitionFragment, VERTEX } from './shaders'
 
 type ProgramName = 'cover' | Exclude<TransitionType, 'none'>
@@ -78,10 +78,12 @@ export class WebGL2Renderer extends BaseRenderer {
     return p
   }
 
-  #upload(unit: 0 | 1, video: FrameSource, rotation: number, prog: Prog) {
+  #upload(unit: 0 | 1, video: FrameSource, place: Placement, prog: Prog) {
     const gl = this.#gl
     const size = sourceSize(video)
-    const c = coverCrop(size.width, size.height, this.canvas.width, this.canvas.height, rotation)
+    const { rotation } = place
+    // Textur liegt wegen UNPACK_FLIP_Y mit y nach oben → panY spiegeln.
+    const c = coverCrop(size.width, size.height, this.canvas.width, this.canvas.height, rotation, place.panX, 1 - place.panY)
     const s = unit === 0 ? 'A' : 'B'
     gl.activeTexture(unit === 0 ? gl.TEXTURE0 : gl.TEXTURE1)
     gl.bindTexture(gl.TEXTURE_2D, this.#tex[unit])
@@ -96,10 +98,10 @@ export class WebGL2Renderer extends BaseRenderer {
     this.#gl.viewport(0, 0, w, h)
   }
 
-  drawVideo(video: FrameSource, rotation = 0): void {
+  drawVideo(video: FrameSource, place: Placement = CENTER): void {
     if (!isFrameReady(video)) return
     const prog = this.#use('cover')
-    this.#upload(0, video, rotation, prog)
+    this.#upload(0, video, place, prog)
     this.#gl.drawArrays(this.#gl.TRIANGLE_STRIP, 0, 4)
   }
 
@@ -108,14 +110,14 @@ export class WebGL2Renderer extends BaseRenderer {
     to: FrameSource,
     p: number,
     type: TransitionType,
-    rotFrom = 0,
-    rotTo = 0,
+    placeFrom: Placement = CENTER,
+    placeTo: Placement = CENTER,
   ): void {
-    if (type === 'none' || !isFrameReady(to)) return this.drawVideo(from, rotFrom)
-    if (!isFrameReady(from)) return this.drawVideo(to, rotTo)
+    if (type === 'none' || !isFrameReady(to)) return this.drawVideo(from, placeFrom)
+    if (!isFrameReady(from)) return this.drawVideo(to, placeTo)
     const prog = this.#use(type)
-    this.#upload(0, from, rotFrom, prog)
-    this.#upload(1, to, rotTo, prog)
+    this.#upload(0, from, placeFrom, prog)
+    this.#upload(1, to, placeTo, prog)
     this.#gl.uniform1f(prog.u.progress!, p)
     this.#gl.drawArrays(this.#gl.TRIANGLE_STRIP, 0, 4)
   }

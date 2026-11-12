@@ -10,6 +10,7 @@
   import { store } from '../lib/project/store.svelte'
   import { router } from '../lib/router.svelte'
   import ClipStrip from '../ui/ClipStrip.svelte'
+  import { outputSize } from '../lib/renderer/geometry'
 
   const ERROR_TEXT: Record<CameraErrorKind, string> = {
     insecure: 'Kamera braucht HTTPS. Bitte die App über https:// öffnen.',
@@ -29,6 +30,13 @@
   let fileInput: HTMLInputElement | undefined = $state()
 
   const mimeType = pickRecorderMimeType()
+  // Vorschau im Zielformat zeigen: was man sieht, landet (mittig) im Video.
+  const out = $derived(outputSize(store.project.outputAspect))
+  const debug = new URLSearchParams(location.search).has('debug')
+  const camInfo = $derived.by(() => {
+    const s = stream?.getVideoTracks()[0]?.getSettings()
+    return s ? `${s.width}×${s.height}` : ''
+  })
 
   // Kamera öffnen, wenn facing wechselt oder neu angefordert wird.
   $effect(() => {
@@ -105,7 +113,17 @@
 
 <section class="record">
   <!-- svelte-ignore a11y_media_has_caption -->
-  <video bind:this={videoEl} autoplay playsinline muted class:mirror={facing === 'user'}></video>
+  <video
+    bind:this={videoEl}
+    autoplay
+    playsinline
+    muted
+    class:mirror={facing === 'user'}
+    style:--ar={out.width / out.height}
+  ></video>
+  {#if debug && camInfo}
+    <div class="debug">Kamera {camInfo} → {out.width}×{out.height}</div>
+  {/if}
 
   {#if cameraError}
     <div class="error">
@@ -154,18 +172,32 @@
     justify-content: space-between;
     overflow: hidden;
   }
+  /* Rahmen im Ausgabeformat, mittig; object-fit: cover = derselbe Zuschnitt wie der Renderer. */
   video {
     position: fixed;
-    inset: 0;
-    width: 100%;
-    height: 100%;
+    top: 50%;
+    left: 50%;
+    width: min(100vw, 100dvh * var(--ar));
+    aspect-ratio: var(--ar);
+    transform: translate(-50%, -50%);
     object-fit: cover;
     background: #000;
     z-index: 0;
   }
   /* Frontkamera nur in der Vorschau spiegeln, nicht in der Aufnahme. */
   video.mirror {
-    transform: scaleX(-1);
+    transform: translate(-50%, -50%) scaleX(-1);
+  }
+  .debug {
+    position: fixed;
+    top: 4rem;
+    left: 0.75rem;
+    z-index: 1;
+    font: 11px/1.3 ui-monospace, monospace;
+    color: #0f0;
+    background: rgba(0, 0, 0, 0.7);
+    padding: 2px 6px;
+    border-radius: 4px;
   }
   header,
   footer {

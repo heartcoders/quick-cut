@@ -11,6 +11,8 @@ export async function buildRenderClips(clips: readonly Clip[]): Promise<RenderCl
     trimStart: c.trimStart,
     trimEnd: c.trimEnd,
     rotation: c.rotation,
+    panX: c.panX ?? 0.5,
+    panY: c.panY ?? 0.5,
   }))
   const urls = await Promise.all(snap.map((c) => getClipUrl(c)))
   return snap.flatMap((c, i) => (urls[i] ? [{ ...c, url: urls[i]! }] : []))

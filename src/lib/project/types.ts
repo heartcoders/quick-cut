@@ -11,6 +11,9 @@ export interface ClipRecord {
   width: number
   height: number
   rotation: number // Grad, 0 | 90 | 180 | 270
+  /** Ausschnitt-Position im Zielformat, 0…1 (0.5 = mittig). Fehlt bei alten Projekten. */
+  panX?: number
+  panY?: number
   trimStart: number // Sekunden, >= 0
   trimEnd: number // Sekunden, <= duration
   source: ClipSource

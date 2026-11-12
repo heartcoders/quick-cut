@@ -127,6 +127,12 @@ class ProjectStore {
     this.updateClip(id, { trimStart, trimEnd })
   }
 
+  /** Ausschnitt verschieben (0…1, 0.5 = mittig). */
+  setPan(id: string, panX: number, panY: number): void {
+    const clamp = (v: number) => Math.min(1, Math.max(0, v))
+    this.updateClip(id, { panX: clamp(panX), panY: clamp(panY) })
+  }
+
   /**
    * Größtmögliche Dauer für den Übergang nach Clip `index` (Projekt-Index):
    * bezogen auf den nächsten *abspielbaren* Clip. 0, wenn es keinen gibt.

@@ -1,8 +1,8 @@
 import type { AspectRatio } from '../project/types'
 import type { TransitionSpec, TransitionType } from '../timeline/timeline'
-import type { FrameSource } from './geometry'
+import type { FrameSource, Placement } from './geometry'
 
-export type { FrameSource }
+export type { FrameSource, Placement }
 
 export interface RenderClip {
   url: string
@@ -12,6 +12,9 @@ export interface RenderClip {
   trimStart: number
   trimEnd: number
   rotation: number
+  /** Ausschnitt-Position 0…1 (0.5 = mittig). */
+  panX: number
+  panY: number
 }
 
 export interface RenderProject {
@@ -35,15 +38,15 @@ export interface Renderer {
   /** Zielgröße passend zum Format setzen. */
   setOutput(aspect: AspectRatio): void
   /** Zeichnet den aktuellen Frame eines Videos oder eines dekodierten Frames. */
-  drawVideo(video: FrameSource, rotation?: number): void
+  drawVideo(video: FrameSource, place?: Placement): void
   /** Übergang zwischen zwei spielenden Videos, p = 0…1. */
   drawTransition(
     from: FrameSource,
     to: FrameSource,
     p: number,
     type: TransitionType,
-    rotFrom?: number,
-    rotTo?: number,
+    placeFrom?: Placement,
+    placeTo?: Placement,
   ): void
   clear(): void
   dispose(): void

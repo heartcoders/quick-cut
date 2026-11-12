@@ -172,9 +172,12 @@ export async function exportV2(opts: ExportV2Options): Promise<RenderResult> {
       if (f) {
         const from = await frameOf(f.from.index)
         const to = f.to ? await frameOf(f.to.index) : null
-        if (from && to) renderer.drawTransition(from, to, f.p, f.type)
-        else if (from) renderer.drawVideo(from)
-        else if (to) renderer.drawVideo(to)
+        // Dekodierte Frames sind bereits aufrecht → nur den Ausschnitt übernehmen.
+        const pf = { ...clips[f.from.index]!, rotation: 0 }
+        const pt = f.to ? { ...clips[f.to.index]!, rotation: 0 } : pf
+        if (from && to) renderer.drawTransition(from, to, f.p, f.type, pf, pt)
+        else if (from) renderer.drawVideo(from, pf)
+        else if (to) renderer.drawVideo(to, pt)
       }
       await videoSource.add(i / EXPORT_FPS, 1 / EXPORT_FPS)
       opts.onProgress?.(Math.min(total, (i + 1) / EXPORT_FPS))
