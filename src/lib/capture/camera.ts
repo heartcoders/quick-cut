@@ -1,4 +1,5 @@
 export type Facing = 'user' | 'environment'
+export type Lens = 'ultra' | 'wide' | 'tele'
 export type CameraErrorKind = 'insecure' | 'denied' | 'notfound' | 'busy' | 'other'
 
 export class CameraError extends Error {
@@ -10,8 +11,21 @@ export class CameraError extends Error {
   }
 }
 
-function videoConstraints(facing: Facing): MediaTrackConstraints {
-  return { facingMode: facing, width: { ideal: 1080 }, height: { ideal: 1920 } }
+export interface CameraRequest {
+  facing: Facing
+  /** Bestimmtes Objektiv; fehlt oder ist veraltet → Standardkamera der Seite. */
+  deviceId?: string
+}
+
+/**
+ * 1920×1920 als „ideal“ ist Absicht: Der Abstand zu 1920×1440 (4:3, volles
+ * Sensor-Bildfeld) ist kleiner als zu 1920×1080 (16:9, bereits beschnitten) –
+ * egal, ob der Browser die Werte im Hoch- oder Querformat auslegt. Eine feste
+ * 1080×1920-Vorgabe lieferte auf iOS einen engen 16:9-Ausschnitt („Zoom“).
+ */
+function videoConstraints({ facing, deviceId }: CameraRequest): MediaTrackConstraints {
+  const size = { width: { ideal: 1920 }, height: { ideal: 1920 } }
+  return deviceId ? { deviceId: { exact: deviceId }, ...size } : { facingMode: facing, ...size }
 }
 
 function classify(err: unknown): CameraErrorKind {
@@ -22,23 +36,51 @@ function classify(err: unknown): CameraErrorKind {
   return 'other'
 }
 
-/** Öffnet Kamera + Mikrofon. Ohne Mikrofon wird nur Video angefordert. */
-export async function openCamera(facing: Facing): Promise<MediaStream> {
-  if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
-    throw new CameraError('insecure')
-  }
+async function request(req: CameraRequest): Promise<MediaStream> {
+  const video = videoConstraints(req)
   try {
-    return await navigator.mediaDevices.getUserMedia({ video: videoConstraints(facing), audio: true })
+    return await navigator.mediaDevices.getUserMedia({ video, audio: true })
   } catch (err) {
     // Kein Mikrofon vorhanden → wenigstens Video.
     if (err instanceof DOMException && err.name === 'NotFoundError') {
-      try {
-        return await navigator.mediaDevices.getUserMedia({ video: videoConstraints(facing), audio: false })
-      } catch (err2) {
-        throw new CameraError(classify(err2), err2)
-      }
+      return await navigator.mediaDevices.getUserMedia({ video, audio: false })
     }
-    throw new CameraError(classify(err), err)
+    throw err
+  }
+}
+
+/** Öffnet Kamera + Mikrofon. Ohne Mikrofon wird nur Video angefordert. */
+export async function openCamera(req: CameraRequest): Promise<MediaStream> {
+  if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+    throw new CameraError('insecure')
+  }
+  let stream: MediaStream
+  try {
+    stream = await request(req)
+  } catch (err) {
+    const stale = err instanceof DOMException && (err.name === 'OverconstrainedError' || err.name === 'NotFoundError')
+    if (!req.deviceId || !stale) throw new CameraError(classify(err), err)
+    // deviceIds können sich ändern (z. B. nach Löschen der Website-Daten).
+    try {
+      stream = await request({ facing: req.facing })
+    } catch (err2) {
+      throw new CameraError(classify(err2), err2)
+    }
+  }
+  await widestZoom(stream)
+  return stream
+}
+
+/** Kleinsten Zoom einstellen, den die Kamera anbietet (Safari ≥ 17 kennt `zoom`). */
+async function widestZoom(stream: MediaStream): Promise<void> {
+  const track = stream.getVideoTracks()[0]
+  const min = (track?.getCapabilities?.() as { zoom?: { min?: number } } | undefined)?.zoom?.min
+  const current = (track?.getSettings() as { zoom?: number } | undefined)?.zoom
+  if (!track || min === undefined || current === undefined || current <= min) return
+  try {
+    await track.applyConstraints({ advanced: [{ zoom: min } as MediaTrackConstraintSet] })
+  } catch {
+    // Kein Zoom möglich – dann eben mit Standard-Bildfeld.
   }
 }
 
@@ -49,4 +91,71 @@ export function stopStream(stream: MediaStream | null | undefined): void {
 
 export function isStreamLive(stream: MediaStream | null | undefined): boolean {
   return !!stream && stream.getVideoTracks().some((t) => t.readyState === 'live')
+}
+
+// ---------------------------------------------------------------------------
+// Objektive
+
+export interface CameraDevice {
+  id: string
+  label: string
+  facing: Facing | null
+  lens: Lens
+  /** iOS-„Dual/Triple-Kamera“: schaltet selbst zwischen Objektiven um. */
+  virtual: boolean
+}
+
+/**
+ * Ordnet ein Gerät anhand seines Namens ein. iOS liefert lokalisierte Namen,
+ * z. B. „Rückseitige Ultraweitwinkelkamera“ / „Back Ultra Wide Camera“.
+ */
+export function classifyCamera(label: string): Pick<CameraDevice, 'facing' | 'lens' | 'virtual'> {
+  const facing: Facing | null = /front|vorder|selfie|user/i.test(label)
+    ? 'user'
+    : /back|rück|rueck|rear|environment/i.test(label)
+      ? 'environment'
+      : null
+  const lens: Lens = /ultra/i.test(label) ? 'ultra' : /tele/i.test(label) ? 'tele' : 'wide'
+  return { facing, lens, virtual: /dual|triple/i.test(label) }
+}
+
+/** Alle Kameras mit Namen (Namen gibt es erst nach erteilter Erlaubnis). */
+export async function listCameras(): Promise<CameraDevice[]> {
+  if (!navigator.mediaDevices?.enumerateDevices) return []
+  const devices = await navigator.mediaDevices.enumerateDevices()
+  return devices
+    .filter((d) => d.kind === 'videoinput' && d.label)
+    .map((d) => ({ id: d.deviceId, label: d.label, ...classifyCamera(d.label) }))
+}
+
+const LENS_ORDER: Lens[] = ['ultra', 'wide', 'tele']
+
+/** Einzelne (nicht virtuelle) Objektive einer Seite, je Typ eins, sortiert weit → tele. */
+export function lensesFor(devices: CameraDevice[], facing: Facing): CameraDevice[] {
+  const byLens = new Map<Lens, CameraDevice>()
+  for (const d of devices) {
+    if (d.facing === facing && !d.virtual && !byLens.has(d.lens)) byLens.set(d.lens, d)
+  }
+  return LENS_ORDER.flatMap((l) => byLens.get(l) ?? [])
+}
+
+// ---------------------------------------------------------------------------
+// Berechtigung
+
+export type PermissionHint = 'granted' | 'prompt' | 'denied' | 'unknown'
+
+/**
+ * Status von Kamera + Mikrofon, ohne nachzufragen. Safari steht standardmäßig
+ * auf „Fragen“ und meldet dann nach jedem Neuladen wieder „prompt“.
+ */
+export async function cameraPermission(): Promise<PermissionHint> {
+  try {
+    const names = ['camera', 'microphone'] as PermissionName[]
+    const states = await Promise.all(names.map((name) => navigator.permissions.query({ name })))
+    if (states.some((s) => s.state === 'denied')) return 'denied'
+    if (states.every((s) => s.state === 'granted')) return 'granted'
+    return 'prompt'
+  } catch {
+    return 'unknown'
+  }
 }

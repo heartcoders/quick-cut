@@ -1,6 +1,23 @@
+<script module lang="ts">
+  // Einmal pro Seitenaufruf: Kehrt man aus dem Schnitt zurück, nicht erneut fragen.
+  let cameraStarted = false
+</script>
+
 <script lang="ts">
-  import { onMount } from 'svelte'
-  import { CameraError, isStreamLive, openCamera, stopStream, type CameraErrorKind, type Facing } from '../lib/capture/camera'
+  import { onMount, untrack } from 'svelte'
+  import {
+    CameraError,
+    cameraPermission,
+    isStreamLive,
+    lensesFor,
+    listCameras,
+    openCamera,
+    stopStream,
+    type CameraDevice,
+    type CameraErrorKind,
+    type Facing,
+    type Lens,
+  } from '../lib/capture/camera'
   import RecordButton from '../lib/capture/RecordButton.svelte'
   import { startRecording, type ActiveRecording } from '../lib/capture/recorder'
   import { importFiles } from '../lib/import/importFiles'
@@ -12,15 +29,40 @@
   import ClipStrip from '../ui/ClipStrip.svelte'
   import { outputSize } from '../lib/renderer/geometry'
 
+  const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1)
+  const ALLOW_HINT = isIOS
+    ? 'In Safari links in der Adressleiste auf „aA“ → Website-Einstellungen → Kamera und Mikrofon auf „Erlauben“ stellen.'
+    : 'In den Website-Einstellungen des Browsers Kamera und Mikrofon dauerhaft erlauben.'
+
   const ERROR_TEXT: Record<CameraErrorKind, string> = {
     insecure: 'Kamera braucht HTTPS. Bitte die App über https:// öffnen.',
-    denied: 'Kein Zugriff auf Kamera/Mikrofon. Bitte in den Browser-Einstellungen erlauben.',
+    denied: `Kein Zugriff auf Kamera/Mikrofon. ${ALLOW_HINT}`,
     notfound: 'Keine passende Kamera gefunden.',
     busy: 'Die Kamera wird gerade von einer anderen App benutzt.',
     other: 'Kamera konnte nicht gestartet werden.',
   }
 
-  let facing = $state<Facing>('user')
+  const LENS_LABEL: Record<Lens, string> = { ultra: '0.5×', wide: '1×', tele: 'Tele' }
+
+  // Zuletzt gewählte Kamera merken.
+  const PREF_KEY = 'quick-cut.camera'
+  function loadPref(): { facing: Facing; lens: Lens } {
+    try {
+      const p = JSON.parse(localStorage.getItem(PREF_KEY) ?? '{}')
+      return {
+        facing: p.facing === 'environment' ? 'environment' : 'user',
+        lens: ['ultra', 'wide', 'tele'].includes(p.lens) ? p.lens : 'wide',
+      }
+    } catch {
+      return { facing: 'user', lens: 'wide' }
+    }
+  }
+  const pref = loadPref()
+
+  let facing = $state<Facing>(pref.facing)
+  let lens = $state<Lens>(pref.lens)
+  let cameras = $state<CameraDevice[]>([])
+  let started = $state(cameraStarted) // false → erst Hinweis zeigen, nicht sofort fragen
   let stream = $state<MediaStream | null>(null)
   let cameraError = $state<CameraErrorKind | null>(null)
   let reopen = $state(0) // erhöhen → Kamera neu öffnen
@@ -29,27 +71,74 @@
   let isRecording = $state(false)
   let fileInput: HTMLInputElement | undefined = $state()
 
+  const lenses = $derived(lensesFor(cameras, facing))
+  const activeLens = $derived(lenses.some((l) => l.lens === lens) ? lens : 'wide')
+  // Spiegeln nach tatsächlicher Kamera, nicht nach Wunsch (Fallbacks).
+  const mirror = $derived((stream?.getVideoTracks()[0]?.getSettings().facingMode ?? facing) === 'user')
+
   const mimeType = pickRecorderMimeType()
   // Vorschau im Zielformat zeigen: was man sieht, landet (mittig) im Video.
   const out = $derived(outputSize(store.project.outputAspect))
   const debug = new URLSearchParams(location.search).has('debug')
   const camInfo = $derived.by(() => {
-    const s = stream?.getVideoTracks()[0]?.getSettings()
-    return s ? `${s.width}×${s.height}` : ''
+    const track = stream?.getVideoTracks()[0]
+    if (!track) return ''
+    const s = track.getSettings() as MediaTrackSettings & { zoom?: number }
+    const c = (track.getCapabilities?.() ?? {}) as MediaTrackCapabilities & { zoom?: { min?: number; max?: number } }
+    return [
+      `${track.label}`,
+      `${s.width}×${s.height} → ${out.width}×${out.height}`,
+      `facing ${s.facingMode ?? '?'} · zoom ${s.zoom ?? '–'} (${c.zoom ? `${c.zoom.min}–${c.zoom.max}` : 'n/a'})`,
+      `max ${c.width?.max ?? '?'}×${c.height?.max ?? '?'}`,
+      ...cameras.map((d) => `${d.id === s.deviceId ? '▸' : '·'} ${d.label} [${d.facing ?? '?'}/${d.lens}${d.virtual ? '/virt' : ''}]`),
+    ].join('\n')
   })
 
-  // Kamera öffnen, wenn facing wechselt oder neu angefordert wird.
+  async function refreshCameras(): Promise<CameraDevice[]> {
+    try {
+      cameras = await listCameras()
+    } catch {
+      // Ohne Liste gibt es eben keine Objektivwahl.
+    }
+    return cameras
+  }
+
+  function start() {
+    started = true
+    reopen++
+  }
+
   $effect(() => {
+    try {
+      localStorage.setItem(PREF_KEY, JSON.stringify({ facing, lens }))
+    } catch {
+      // Privater Modus o. Ä. – dann ohne Merken.
+    }
+  })
+
+  // Kamera öffnen, wenn Seite/Objektiv wechselt oder neu angefordert wird.
+  $effect(() => {
+    if (!started) return
     void reopen
     const want = facing
+    const wantLens = lens
+    const deviceId = untrack(() => lensesFor(cameras, want).find((d) => d.lens === wantLens)?.id)
     let cancelled = false
     let opened: MediaStream | null = null
     cameraError = null
-    openCamera(want)
-      .then((s) => {
+    openCamera({ facing: want, deviceId })
+      .then(async (s) => {
         if (cancelled) return stopStream(s)
         opened = s
         stream = s
+        cameraStarted = true
+        // Gerätenamen gibt es erst jetzt. Lief die Kamera noch ohne Objektivwahl,
+        // einmal auf das gewünschte Objektiv umschalten.
+        const list = await refreshCameras()
+        if (cancelled || deviceId) return
+        const target = lensesFor(list, want).find((d) => d.lens === wantLens)
+        const current = s.getVideoTracks()[0]?.getSettings().deviceId
+        if (target && current && target.id !== current) reopen++
       })
       .catch((err) => {
         if (!cancelled) cameraError = err instanceof CameraError ? err.kind : 'other'
@@ -66,12 +155,25 @@
   })
 
   onMount(() => {
+    // Nur sofort öffnen, wenn der Browser nicht nachfragen wird.
+    if (!started) {
+      void cameraPermission().then((p) => {
+        if (started) return
+        if (p === 'granted' || p === 'unknown') start()
+        else if (p === 'denied') cameraError = 'denied'
+      })
+    }
     // iOS beendet die Kamera im Hintergrund: beim Zurückkehren neu öffnen.
     const onVisible = () => {
-      if (document.visibilityState === 'visible' && !isStreamLive(stream)) reopen++
+      if (started && document.visibilityState === 'visible' && !isStreamLive(stream)) reopen++
     }
+    const onDeviceChange = () => void refreshCameras()
     document.addEventListener('visibilitychange', onVisible)
-    return () => document.removeEventListener('visibilitychange', onVisible)
+    navigator.mediaDevices?.addEventListener?.('devicechange', onDeviceChange)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      navigator.mediaDevices?.removeEventListener?.('devicechange', onDeviceChange)
+    }
   })
 
   function handleStart(): boolean {
@@ -118,17 +220,17 @@
     autoplay
     playsinline
     muted
-    class:mirror={facing === 'user'}
+    class:mirror={mirror}
     style:--ar={out.width / out.height}
   ></video>
   {#if debug && camInfo}
-    <div class="debug">Kamera {camInfo} → {out.width}×{out.height}</div>
+    <div class="debug">{camInfo}</div>
   {/if}
 
   {#if cameraError}
     <div class="error">
       <p>{ERROR_TEXT[cameraError]}</p>
-      <button onclick={() => reopen++}>Erneut versuchen</button>
+      <button onclick={start}>Erneut versuchen</button>
     </div>
   {/if}
 
@@ -141,7 +243,27 @@
     <button class="round" onclick={flip} disabled={isRecording} aria-label="Kamera wechseln">⟲</button>
   </header>
 
+  {#if !started && !cameraError}
+    <div class="intro">
+      <p>Für die Aufnahme braucht Quick Cut Kamera und Mikrofon.</p>
+      <button class="primary" onclick={start}>Kamera starten</button>
+      <p class="hint">Damit nicht bei jedem Öffnen gefragt wird: {ALLOW_HINT}</p>
+    </div>
+  {/if}
+
   <footer>
+    {#if lenses.length > 1}
+      <div class="lenses" role="group" aria-label="Objektiv">
+        {#each lenses as l (l.id)}
+          <button
+            class:active={l.lens === activeLens}
+            disabled={isRecording}
+            aria-pressed={l.lens === activeLens}
+            onclick={() => (lens = l.lens)}>{LENS_LABEL[l.lens]}</button
+          >
+        {/each}
+      </div>
+    {/if}
     {#if store.hasClips}
       <ClipStrip removable={!isRecording} reorderable={!isRecording} />
     {/if}
@@ -198,6 +320,44 @@
     background: rgba(0, 0, 0, 0.7);
     padding: 2px 6px;
     border-radius: 4px;
+    white-space: pre;
+    max-width: calc(100vw - 1.5rem);
+    overflow: hidden;
+  }
+  .intro {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    justify-items: center;
+    gap: 1rem;
+    margin: 0 1.5rem;
+    padding: 1.5rem;
+    text-align: center;
+    border-radius: 16px;
+    background: rgba(20, 20, 20, 0.85);
+  }
+  .intro .hint {
+    margin: 0;
+    font-size: 0.8rem;
+    opacity: 0.7;
+  }
+  .lenses {
+    display: flex;
+    justify-content: center;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+  }
+  .lenses button {
+    min-width: 44px;
+    min-height: 36px;
+    padding: 0 0.6rem;
+    border-radius: 18px;
+    font-size: 0.8rem;
+    background: rgba(40, 40, 40, 0.6);
+  }
+  .lenses button.active {
+    color: var(--accent);
+    font-weight: 600;
   }
   header,
   footer {
