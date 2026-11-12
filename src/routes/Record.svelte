@@ -42,25 +42,33 @@
     other: 'Kamera konnte nicht gestartet werden.',
   }
 
-  const LENS_LABEL: Record<Lens, string> = { ultra: '0.5×', wide: '1×', tele: 'Tele' }
+  // Vorne ist Ultraweit das Bildfeld der iOS-Kamera-App – dort heißt es „1×“.
+  const LENS_LABEL: Record<Facing, Record<Lens, string>> = {
+    user: { ultra: '1×', wide: '2×', tele: 'Tele' },
+    environment: { ultra: '0.5×', wide: '1×', tele: 'Tele' },
+  }
+  const DEFAULT_LENS: Record<Facing, Lens> = { user: 'ultra', environment: 'wide' }
+  const LENSES: Lens[] = ['ultra', 'wide', 'tele']
 
-  // Zuletzt gewählte Kamera merken.
+  // Zuletzt gewählte Kamera merken, Objektiv je Seite.
   const PREF_KEY = 'quick-cut.camera'
-  function loadPref(): { facing: Facing; lens: Lens } {
+  function loadPref(): { facing: Facing; lenses: Record<Facing, Lens> } {
     try {
       const p = JSON.parse(localStorage.getItem(PREF_KEY) ?? '{}')
+      const pick = (f: Facing): Lens => (LENSES.includes(p.lenses?.[f]) ? p.lenses[f] : DEFAULT_LENS[f])
       return {
         facing: p.facing === 'environment' ? 'environment' : 'user',
-        lens: ['ultra', 'wide', 'tele'].includes(p.lens) ? p.lens : 'wide',
+        lenses: { user: pick('user'), environment: pick('environment') },
       }
     } catch {
-      return { facing: 'user', lens: 'wide' }
+      return { facing: 'user', lenses: { ...DEFAULT_LENS } }
     }
   }
   const pref = loadPref()
 
   let facing = $state<Facing>(pref.facing)
-  let lens = $state<Lens>(pref.lens)
+  let lensBy = $state<Record<Facing, Lens>>(pref.lenses)
+  const lens = $derived(lensBy[facing])
   let cameras = $state<CameraDevice[]>([])
   let started = $state(cameraStarted) // false → erst Hinweis zeigen, nicht sofort fragen
   let stream = $state<MediaStream | null>(null)
@@ -72,7 +80,10 @@
   let fileInput: HTMLInputElement | undefined = $state()
 
   const lenses = $derived(lensesFor(cameras, facing))
-  const activeLens = $derived(lenses.some((l) => l.lens === lens) ? lens : 'wide')
+  const activeLens = $derived.by((): Lens => {
+    for (const want of [lens, DEFAULT_LENS[facing]]) if (lenses.some((l) => l.lens === want)) return want
+    return lenses[0]?.lens ?? 'wide'
+  })
   // Spiegeln nach tatsächlicher Kamera, nicht nach Wunsch (Fallbacks).
   const mirror = $derived((stream?.getVideoTracks()[0]?.getSettings().facingMode ?? facing) === 'user')
 
@@ -83,11 +94,17 @@
   const camInfo = $derived.by(() => {
     const track = stream?.getVideoTracks()[0]
     if (!track) return ''
-    const s = track.getSettings() as MediaTrackSettings & { zoom?: number }
-    const c = (track.getCapabilities?.() ?? {}) as MediaTrackCapabilities & { zoom?: { min?: number; max?: number } }
+    const s = track.getSettings() as MediaTrackSettings & { zoom?: number; focusMode?: string; focusDistance?: number }
+    const c = (track.getCapabilities?.() ?? {}) as MediaTrackCapabilities & {
+      zoom?: { min?: number; max?: number }
+      focusMode?: string[]
+      focusDistance?: { min?: number; max?: number }
+    }
+    const ratio = s.width && s.height ? (Math.max(s.width, s.height) / Math.min(s.width, s.height)).toFixed(2) : '?'
     return [
       `${track.label}`,
-      `${s.width}×${s.height} → ${out.width}×${out.height}`,
+      `${s.width}×${s.height} (${ratio}) → ${out.width}×${out.height}`,
+      `focus ${s.focusMode ?? '–'} [${c.focusMode?.join(',') ?? 'n/a'}] · dist ${s.focusDistance ?? '–'} (${c.focusDistance ? `${c.focusDistance.min}–${c.focusDistance.max}` : 'n/a'})`,
       `facing ${s.facingMode ?? '?'} · zoom ${s.zoom ?? '–'} (${c.zoom ? `${c.zoom.min}–${c.zoom.max}` : 'n/a'})`,
       `max ${c.width?.max ?? '?'}×${c.height?.max ?? '?'}`,
       ...cameras.map((d) => `${d.id === s.deviceId ? '▸' : '·'} ${d.label} [${d.facing ?? '?'}/${d.lens}${d.virtual ? '/virt' : ''}]`),
@@ -110,7 +127,7 @@
 
   $effect(() => {
     try {
-      localStorage.setItem(PREF_KEY, JSON.stringify({ facing, lens }))
+      localStorage.setItem(PREF_KEY, JSON.stringify({ facing, lenses: lensBy }))
     } catch {
       // Privater Modus o. Ä. – dann ohne Merken.
     }
@@ -259,7 +276,7 @@
             class:active={l.lens === activeLens}
             disabled={isRecording}
             aria-pressed={l.lens === activeLens}
-            onclick={() => (lens = l.lens)}>{LENS_LABEL[l.lens]}</button
+            onclick={() => (lensBy[facing] = l.lens)}>{LENS_LABEL[facing][l.lens]}</button
           >
         {/each}
       </div>

@@ -68,7 +68,45 @@ export async function openCamera(req: CameraRequest): Promise<MediaStream> {
     }
   }
   await widestZoom(stream)
+  await preferFullSensor(stream)
   return stream
+}
+
+/**
+ * 4:3-Größen (lange Seite ≤ 1920) in der Ausrichtung des aktuellen Formats,
+ * größte zuerst. Leer, wenn das Format nicht nach beschnittenem 16:9 aussieht.
+ */
+export function fourByThreeCandidates(width: number, height: number): { width: number; height: number }[] {
+  if (!width || !height) return []
+  const long = Math.max(width, height)
+  const short = Math.min(width, height)
+  if (long / short < 1.6) return []
+  const portrait = width < height
+  const sizes: [number, number][] = [
+    [1920, 1440],
+    [1440, 1080],
+    [1280, 960],
+    [640, 480],
+  ]
+  return sizes.map(([l, s]) => (portrait ? { width: s, height: l } : { width: l, height: s }))
+}
+
+/**
+ * Ältere iPhones liefern vorne gern einen beschnittenen 16:9-Modus, wenn
+ * 1920×1440 nicht angeboten wird. Dann eine 4:3-Größe (volles Bildfeld) erzwingen.
+ */
+async function preferFullSensor(stream: MediaStream): Promise<void> {
+  const track = stream.getVideoTracks()[0]
+  if (!track?.applyConstraints) return
+  const s = track.getSettings()
+  for (const size of fourByThreeCandidates(s.width ?? 0, s.height ?? 0)) {
+    try {
+      await track.applyConstraints({ width: { exact: size.width }, height: { exact: size.height } })
+      return
+    } catch {
+      // Größe nicht verfügbar – nächste probieren.
+    }
+  }
 }
 
 /** Kleinsten Zoom einstellen, den die Kamera anbietet (Safari ≥ 17 kennt `zoom`). */
