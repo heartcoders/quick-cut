@@ -22,7 +22,7 @@
   let progress = $state(0)
   let errorText = $state('')
   let result = $state<{ file: File; url: string; canShare: boolean } | null>(null)
-  let renderClips = $state<RenderClip[] | null>(null)
+  let renderClips = $state.raw<RenderClip[] | null>(null)
   const transitions = $derived(plainTransitions(store.playableTransitions))
 
   let stage: HTMLDivElement | undefined = $state()

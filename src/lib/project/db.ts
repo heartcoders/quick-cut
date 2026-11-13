@@ -1,9 +1,9 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb'
 import { newId } from './id'
-import type { ProjectRecord } from './types'
+import type { FaceTrackRecord, ProjectRecord } from './types'
 
 const DB_NAME = 'quick-cut'
-const DB_VERSION = 2
+const DB_VERSION = 3
 /** Einziges Projekt in DB-Version 1. */
 const LEGACY_KEY = 'current'
 
@@ -11,6 +11,8 @@ interface QuickCutDB extends DBSchema {
   blobs: { key: string; value: Blob }
   thumbs: { key: string; value: Blob }
   project: { key: string; value: ProjectRecord }
+  /** Gesichtserkennung je Video, Schlüssel = blobKey */
+  faces: { key: string; value: FaceTrackRecord }
 }
 
 let dbPromise: Promise<IDBPDatabase<QuickCutDB>> | null = null
@@ -33,6 +35,7 @@ function db(): Promise<IDBPDatabase<QuickCutDB>> {
           await store.delete(LEGACY_KEY)
         }
       }
+      if (oldVersion < 3) database.createObjectStore('faces')
     },
   })
   return dbPromise
@@ -64,11 +67,20 @@ export async function getThumb(key: string): Promise<Blob | undefined> {
   return (await db()).get('thumbs', key)
 }
 
-/** Löscht Video-Blob und alle Thumbnails eines Clips in einer Transaktion. */
+export async function putFaces(blobKey: string, rec: FaceTrackRecord): Promise<void> {
+  await (await db()).put('faces', rec, blobKey)
+}
+
+export async function getFaces(blobKey: string): Promise<FaceTrackRecord | undefined> {
+  return (await db()).get('faces', blobKey)
+}
+
+/** Löscht Video-Blob, Gesichter und alle Thumbnails eines Clips in einer Transaktion. */
 export async function deleteClipData(blobKey: string, thumbKeys: string[]): Promise<void> {
-  const tx = (await db()).transaction(['blobs', 'thumbs'], 'readwrite')
+  const tx = (await db()).transaction(['blobs', 'thumbs', 'faces'], 'readwrite')
   await Promise.all([
     tx.objectStore('blobs').delete(blobKey),
+    tx.objectStore('faces').delete(blobKey),
     ...thumbKeys.map((k) => tx.objectStore('thumbs').delete(k)),
     tx.done,
   ])
@@ -103,11 +115,12 @@ function blobKeysOf(p: ProjectRecord): string[] {
 
 /** Löscht ein Projekt samt Videos, Thumbnails und Audio in einer Transaktion. */
 export async function deleteProject(id: string): Promise<void> {
-  const tx = (await db()).transaction(['project', 'blobs', 'thumbs'], 'readwrite')
+  const tx = (await db()).transaction(['project', 'blobs', 'thumbs', 'faces'], 'readwrite')
   const rec = await tx.objectStore('project').get(id)
   if (rec) {
     await Promise.all([
       ...blobKeysOf(rec).map((k) => tx.objectStore('blobs').delete(k)),
+      ...rec.clips.map((c) => tx.objectStore('faces').delete(c.blobKey)),
       ...rec.clips.flatMap((c) => c.thumbKeys).map((k) => tx.objectStore('thumbs').delete(k)),
       tx.objectStore('project').delete(id),
     ])
@@ -132,6 +145,8 @@ export async function duplicateProject(id: string, name: string): Promise<Projec
   for (const [from, to] of blobMap) {
     const blob = await d.get('blobs', from)
     if (blob) await d.put('blobs', blob, to)
+    const faces = await d.get('faces', from)
+    if (faces) await d.put('faces', faces, to)
   }
   for (const [from, to] of thumbMap) {
     const blob = await d.get('thumbs', from)

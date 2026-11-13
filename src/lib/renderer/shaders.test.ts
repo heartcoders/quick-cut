@@ -16,4 +16,16 @@ describe('shaders', () => {
       for (const u of ['uGradeB', 'uGrade2B', 'uFxB']) expect(src).toContain(u)
     }
   })
+
+  it('Gesichter-Uniforms für beide Seiten', () => {
+    for (const u of ['uFaceA', 'uFaceFxA', 'uFaceNA', 'uStickers']) expect(COVER_FRAGMENT).toContain(u)
+    const src = transitionFragment('slide')
+    for (const u of ['uFaceB', 'uFaceFxB', 'uFaceNB']) expect(src).toContain(u)
+    // MAX_FACES muss vor den Array-Uniforms definiert sein.
+    expect(src.indexOf('#define MAX_FACES')).toBeLessThan(src.indexOf('uFaceA['))
+  })
+
+  it('nur ASCII im GLSL-Quelltext', () => {
+    for (const src of [COVER_FRAGMENT, transitionFragment('wipe')]) expect(src).toMatch(/^[\x00-\x7f]*$/)
+  })
 })

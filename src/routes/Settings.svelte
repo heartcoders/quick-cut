@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pwaUpdate } from '../lib/platform/pwaUpdate.svelte'
   import { router } from '../lib/router.svelte'
   import { settings, type DefaultFacing } from '../lib/settings.svelte'
   import Screen from '../ui/Screen.svelte'
@@ -8,6 +9,14 @@
     { value: 'environment', label: 'Hinten' },
     { value: 'last', label: 'Zuletzt benutzt' },
   ]
+
+  const built = new Date(__BUILD_TIME__).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' })
+  let checked = $state(false)
+
+  async function checkUpdate() {
+    await pwaUpdate.check()
+    checked = true
+  }
 </script>
 
 <Screen title="Einstellungen" back={() => router.go('home')}>
@@ -24,9 +33,34 @@
       {/each}
     </div>
   </section>
+
+  <section>
+    <h2>App</h2>
+    <p class="version">Version vom {built}</p>
+    {#if pwaUpdate.pending}
+      <button class="primary" onclick={() => location.reload()}>Update installieren</button>
+    {:else if pwaUpdate.supported}
+      <button onclick={checkUpdate} disabled={pwaUpdate.checking}>
+        {pwaUpdate.checking ? 'Suche …' : checked ? 'Aktuell – erneut prüfen' : 'Nach Update suchen'}
+      </button>
+    {/if}
+  </section>
 </Screen>
 
 <style>
+  section + section {
+    margin-top: 1.5rem;
+  }
+  .primary {
+    background: var(--accent);
+    color: #000;
+    font-weight: 600;
+  }
+  .version {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
   section {
     display: grid;
     gap: 0.6rem;

@@ -12,7 +12,9 @@
   },
   "type": "module",
   "scripts": {
+    "predev": "node scripts/copy-mediapipe.mjs",
     "dev": "vite",
+    "prebuild": "node scripts/copy-mediapipe.mjs",
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.app.json && tsc -p tsconfig.node.json",
@@ -35,6 +37,7 @@
     "vitest": "^5.1.0"
   },
   "dependencies": {
+    "@mediapipe/tasks-vision": "^1.2.3",
     "idb": "^8.0.4",
     "mediabunny": "^1.65.2"
   }

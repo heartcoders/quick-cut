@@ -1,3 +1,5 @@
+import type { FaceTrackEntry } from '../faces/track'
+
 export type ClipSource = 'recorded' | 'imported'
 export type AspectRatio = '9:16' | '16:9' | '1:1'
 export type ClipStatus = 'processing' | 'ready' | 'error'
@@ -18,6 +20,8 @@ export interface ClipRecord {
   look?: ClipLook
   /** Lautstärke des Clip-Tons 0…1 (0 = stumm). Fehlt = 1. */
   volume?: number
+  /** Effekt auf erkannten Gesichtern. Fehlt = aus. */
+  faces?: ClipFaces
   trimStart: number // Sekunden, >= 0
   trimEnd: number // Sekunden, <= duration
   source: ClipSource
@@ -45,6 +49,31 @@ export interface ClipLook {
 }
 
 export const DEFAULT_LOOK: ClipLook = { filter: 'none', amount: 1, grain: 0, vignette: 0, vhs: 0, glitch: 0 }
+
+export type FaceMode = 'off' | 'blur' | 'pixel' | 'sticker'
+
+/** Gesichter-Effekt eines Clips. Die Gesichter selbst liegen im Store 'faces'. */
+export interface ClipFaces {
+  mode: FaceMode
+  /** Stärke von Weichzeichnen/Verpixeln, 0…1 */
+  strength: number
+  /** Emoji aus STICKERS */
+  sticker: string
+  /** IDs der Gesichter, die unverändert bleiben */
+  excluded: number[]
+}
+
+export const DEFAULT_FACES: ClipFaces = { mode: 'off', strength: 0.7, sticker: '😎', excluded: [] }
+
+/** Ergebnis der Gesichtserkennung eines Videos (Store 'faces', Schlüssel = blobKey). */
+export interface FaceTrackRecord {
+  version: 1
+  /** Analyse-Rate (Samples pro Sekunde) */
+  fps: number
+  tracks: FaceTrackEntry[]
+  /** Vorschaubild pro Gesicht (JPEG), Schlüssel = Track-ID */
+  thumbs: Record<number, Blob>
+}
 
 export interface Transition {
   type: 'none' | 'crossfade' | 'slide' | 'wipe'

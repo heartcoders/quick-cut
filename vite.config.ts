@@ -13,12 +13,14 @@ const https = !process.env.NO_HTTPS
 const base = process.env.BASE_PATH ?? '/'
 export default defineConfig({
   base,
+  define: { __BUILD_TIME__: JSON.stringify(new Date().toISOString()) },
   plugins: [
     svelte(),
     ...(https ? [basicSsl()] : []),
     VitePWA({
       registerType: 'autoUpdate',
-      injectRegister: 'auto',
+      // Registrierung selbst (src/lib/platform/pwaUpdate.svelte.ts): Update-Prüfung und Neuladen im Leerlauf.
+      injectRegister: false,
       includeAssets: ['favicon.ico', 'favicon.svg', 'apple-touch-icon-180x180.png'],
       manifest: {
         name: 'Quick Cut',
@@ -42,7 +44,20 @@ export default defineConfig({
       workbox: {
         // App-Shell offline verfügbar; Clips liegen ohnehin lokal in IndexedDB.
         globPatterns: ['**/*.{js,css,html,svg,png,ico,webmanifest}'],
+        // Gesichtserkennung (WASM ~15 MB, Modell) nicht vorab laden, sondern
+        // beim ersten Benutzen cachen – danach offline verfügbar.
+        globIgnores: ['**/mediapipe/**'],
+        runtimeCaching: [
+          {
+            urlPattern: ({ url }) => /\/(mediapipe|models)\//.test(url.pathname),
+            handler: 'CacheFirst',
+            options: { cacheName: 'face-detection', expiration: { maxEntries: 10 } },
+          },
+        ],
         navigateFallback: 'index.html',
+        // Neue Version sofort aktivieren (bei injectRegister: false setzt das Plugin das nicht selbst).
+        skipWaiting: true,
+        clientsClaim: true,
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
       },
       devOptions: { enabled: false },

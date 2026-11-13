@@ -1,3 +1,4 @@
+import type { RenderFaces } from '../faces/place'
 import type { AspectRatio, ClipLook } from '../project/types'
 import type { TransitionSpec, TransitionType } from '../timeline/timeline'
 import type { FrameSource, Placement } from './geometry'
@@ -18,6 +19,8 @@ export interface RenderClip {
   look: ClipLook
   /** Lautstärke des Clip-Tons 0…1 */
   volume: number
+  /** Gesichter-Effekt (nur gesetzt, wenn aktiv und Gesichter erkannt). */
+  faceFx?: RenderFaces
 }
 
 export interface RenderProject {

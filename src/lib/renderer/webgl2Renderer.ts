@@ -1,6 +1,8 @@
 import type { TransitionType } from '../timeline/timeline'
 import { BaseRenderer } from './baseRenderer'
 import { CENTER, coverCrop, isFrameReady, sourceSize, type FrameSource, type Placement } from './geometry'
+import { MAX_FACES, type FaceDraw } from '../faces/place'
+import { stickerAtlas } from '../faces/stickers'
 import { lookUniforms } from './looks'
 import { COVER_FRAGMENT, transitionFragment, VERTEX } from './shaders'
 
@@ -17,8 +19,31 @@ const UNIFORMS = [
   'progress',
   'uTime',
   'uRes',
-  ...['A', 'B'].flatMap((s) => [`uScale${s}`, `uOffset${s}`, `uRot${s}`, `uGrade${s}`, `uGrade2${s}`, `uFx${s}`]),
+  'uStickers',
+  ...['A', 'B'].flatMap((s) => [
+    `uScale${s}`,
+    `uOffset${s}`,
+    `uRot${s}`,
+    `uGrade${s}`,
+    `uGrade2${s}`,
+    `uFx${s}`,
+    `uFace${s}`,
+    `uFaceFx${s}`,
+    `uFaceN${s}`,
+  ]),
 ]
+
+/** Gesichter als Uniform-Arrays (vec4 je Gesicht, mit Nullen aufgefüllt). */
+function faceUniforms(faces: FaceDraw[] | undefined): { ellipse: Float32Array; fx: Float32Array; n: number } {
+  const ellipse = new Float32Array(MAX_FACES * 4)
+  const fx = new Float32Array(MAX_FACES * 4)
+  const list = (faces ?? []).slice(0, MAX_FACES)
+  list.forEach((f, i) => {
+    ellipse.set([f.cx, f.cy, Math.max(1e-4, f.rx), Math.max(1e-4, f.ry)], i * 4)
+    fx.set([f.mode, f.strength, f.sticker, 0], i * 4)
+  })
+  return { ellipse, fx, n: list.length }
+}
 
 function compile(gl: WebGL2RenderingContext, type: number, src: string): WebGLShader {
   const sh = gl.createShader(type)!
@@ -35,6 +60,7 @@ export class WebGL2Renderer extends BaseRenderer {
   #tex: [WebGLTexture, WebGLTexture]
   #vertex: WebGLShader
   #programs = new Map<ProgramName, Prog>()
+  #stickers: WebGLTexture | null = null
 
   constructor(canvas: HTMLCanvasElement, gl: WebGL2RenderingContext) {
     super(canvas)
@@ -104,6 +130,31 @@ export class WebGL2Renderer extends BaseRenderer {
     gl.uniform4fv(prog.u[`uGrade${s}`]!, look.grade)
     gl.uniform4fv(prog.u[`uGrade2${s}`]!, look.grade2)
     gl.uniform4fv(prog.u[`uFx${s}`]!, look.fx)
+    const faces = faceUniforms(place.faces)
+    gl.uniform4fv(prog.u[`uFace${s}`]!, faces.ellipse)
+    gl.uniform4fv(prog.u[`uFaceFx${s}`]!, faces.fx)
+    gl.uniform1i(prog.u[`uFaceN${s}`]!, faces.n)
+    if (place.faces?.some((f) => f.mode === 3)) this.#bindStickers(prog)
+  }
+
+  /** Sticker-Atlas erst beim ersten Sticker hochladen (Texture Unit 2). */
+  #bindStickers(prog: Prog) {
+    const gl = this.#gl
+    gl.activeTexture(gl.TEXTURE2)
+    if (!this.#stickers) {
+      this.#stickers = gl.createTexture()!
+      gl.bindTexture(gl.TEXTURE_2D, this.#stickers)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true)
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, stickerAtlas())
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false)
+    } else {
+      gl.bindTexture(gl.TEXTURE_2D, this.#stickers)
+    }
+    gl.uniform1i(prog.u.uStickers!, 2)
   }
 
   /** Gemeinsame Uniforms für Zeit und Auflösung (Korn, Scanlines, Vignette). */
@@ -150,6 +201,7 @@ export class WebGL2Renderer extends BaseRenderer {
   override dispose(): void {
     super.dispose()
     for (const t of this.#tex) this.#gl.deleteTexture(t)
+    if (this.#stickers) this.#gl.deleteTexture(this.#stickers)
     this.#gl.getExtension('WEBGL_lose_context')?.loseContext()
   }
 }

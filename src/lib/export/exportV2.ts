@@ -9,6 +9,7 @@
 import * as db from '../project/db'
 import type { AspectRatio } from '../project/types'
 import { EXPORT_FPS, outputSize } from '../renderer/geometry'
+import { withFaces } from '../faces/place'
 import type { RenderClip, Renderer } from '../renderer/types'
 import { scheduleProjectAudio } from '../timeline/audioSchedule'
 import { hasAudio, loadProjectAudio, type AudioTracks } from './renderInput'
@@ -177,8 +178,8 @@ export async function exportV2(opts: ExportV2Options): Promise<RenderResult> {
         const to = f.to ? await frameOf(f.to.index) : null
         // Dekodierte Frames sind bereits aufrecht → nur den Ausschnitt übernehmen.
         renderer.setTime(i / EXPORT_FPS)
-        const pf = { ...clips[f.from.index]!, rotation: 0 }
-        const pt = f.to ? { ...clips[f.to.index]!, rotation: 0 } : pf
+        const pf = { ...withFaces(clips[f.from.index]!, f.from.localTime), rotation: 0 }
+        const pt = f.to ? { ...withFaces(clips[f.to.index]!, f.to.localTime), rotation: 0 } : pf
         if (from && to) renderer.drawTransition(from, to, f.p, f.type, pf, pt)
         else if (from) renderer.drawVideo(from, pf)
         else if (to) renderer.drawVideo(to, pt)

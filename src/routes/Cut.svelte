@@ -10,7 +10,9 @@
   import { store } from '../lib/project/store.svelte'
   import { AudioGraph } from '../lib/renderer/audioGraph'
   import { createRenderer } from '../lib/renderer/createRenderer'
-  import { isNeutral } from '../lib/renderer/looks'
+  import { withFaces } from '../lib/faces/place'
+  import { facesOn } from '../lib/faces/settings'
+  import { isNeutral, normalizeLook } from '../lib/renderer/looks'
   import type { RenderClip, Renderer } from '../lib/renderer/types'
   import { router } from '../lib/router.svelte'
   import { scheduleTimelineAudio } from '../lib/timeline/audioSchedule'
@@ -20,6 +22,7 @@
   import AudioSheet from '../ui/AudioSheet.svelte'
   import ClipStrip from '../ui/ClipStrip.svelte'
   import CropFrame from '../ui/CropFrame.svelte'
+  import FaceSheet from '../ui/FaceSheet.svelte'
   import LookSheet from '../ui/LookSheet.svelte'
   import SourceVideos from '../ui/SourceVideos.svelte'
   import { formatPrecise } from '../ui/format'
@@ -36,10 +39,11 @@
   let allTime = $state(0) // Gesamtzeit bei „Alles abspielen“
   let canvasReady = $state(false) // erster Frame im Canvas → Einzelvorschau ausblenden
   let urls = $state<Record<string, string>>({})
-  let renderClips = $state<RenderClip[]>([])
+  let renderClips = $state.raw<RenderClip[]>([])
   let sheetIndex = $state<number | null>(null)
   let previewingTransition = $state(false)
   let lookOpen = $state(false)
+  let facesOpen = $state(false)
   let audioOpen = $state(false)
   /** Voiceover-Aufnahme: idle → starting (Mikrofon) → recording → saving */
   let voState = $state<'idle' | 'starting' | 'recording' | 'saving'>('idle')
@@ -68,7 +72,10 @@
   const clips = $derived(store.playableClips)
   const clip = $derived(clips.find((c) => c.id === selectedId) ?? clips[0])
   const clipUrl = $derived(clip ? urls[clip.blobKey] : undefined)
-  const lookActive = $derived(!!clip && !isNeutral(clip.look))
+  /** Gesichter-Effekt des gewählten Clips (nur wenn aktiv und Gesichter erkannt). */
+  const clipFaceFx = $derived(clip ? renderClips.find((r) => r.blobKey === clip.blobKey)?.faceFx : undefined)
+  /** Einzelvorschau über den Renderer: bei Look oder Gesichter-Effekt. */
+  const lookActive = $derived(!!clip && (!isNeutral(clip.look) || !!clipFaceFx))
   const hasSoundEdits = $derived(
     (clip?.volume ?? 1) < 1 || !!store.project.music || !!store.project.voiceover,
   )
@@ -153,8 +160,8 @@
   const LOOK_PREVIEW_EDGE = 1280
   $effect(() => {
     const el = single
-    const look = clip?.look
-    if (!lookActive || !el || !lookStage || !look) {
+    const look = normalizeLook(clip?.look)
+    if (!lookActive || !el || !lookStage) {
       lookDrawn = false
       return
     }
@@ -169,7 +176,7 @@
       }
     }
     const r = lookRenderer
-    const place = { rotation: 0, panX: 0.5, panY: 0.5, look: $state.snapshot(look) }
+    const place = { rotation: 0, panX: 0.5, panY: 0.5, look, faceFx: clipFaceFx }
     let last = -1
     let raf = 0
     const tick = () => {
@@ -177,7 +184,7 @@
         const k = Math.min(1, LOOK_PREVIEW_EDGE / Math.max(el.videoWidth, el.videoHeight))
         r.setSize(Math.round(el.videoWidth * k), Math.round(el.videoHeight * k))
         r.setTime(el.currentTime)
-        r.drawVideo(el, place)
+        r.drawVideo(el, withFaces(place, el.currentTime))
         last = el.currentTime
         lookDrawn = true
       }
@@ -429,6 +436,11 @@
     lookOpen = true
   }
 
+  function openFaces() {
+    if (mode === 'all') stopAll()
+    facesOpen = true
+  }
+
   function openTransition(index: number) {
     stopAll()
     sheetIndex = index
@@ -449,11 +461,13 @@
     if (playRendered({ from: Math.max(0, tStart - 1), to: tStart + d + 1 })) previewingTransition = true
   }
 
+  /** „1,2 / 3,4 s“ – kompakt, damit die Werkzeugleiste auf schmale Displays passt. */
+  const bare = (t: number) => formatPrecise(t).replace(/ s$/, '')
   const timeLabel = $derived(
     mode === 'all'
-      ? `${formatPrecise(allTime)} / ${formatPrecise(store.totalDuration)}`
+      ? `${bare(allTime)} / ${formatPrecise(store.totalDuration)}`
       : clip
-        ? `${formatPrecise(Math.max(0, playhead - clip.trimStart))} / ${formatPrecise(clip.trimEnd - clip.trimStart)}`
+        ? `${bare(Math.max(0, playhead - clip.trimStart))} / ${formatPrecise(clip.trimEnd - clip.trimStart)}`
         : '',
   )
 </script>
@@ -496,13 +510,20 @@
         {mode === 'clip' ? '❚❚' : '▶'}
       </button>
       <span class="time">{timeLabel}</span>
-      <button class="look" class:on={lookActive} onclick={openLook} disabled={!clip}>Look</button>
+      <button class="look" class:on={!!clip && !isNeutral(clip.look)} onclick={openLook} disabled={!clip}>Look</button>
+      <button
+        class="faces"
+        class:on={facesOn(clip?.faces)}
+        onclick={openFaces}
+        disabled={!clip}
+        aria-label="Gesichter">☺</button
+      >
       <button
         class="sound"
         class:on={hasSoundEdits}
         onclick={openAudio}
         disabled={!clip}
-        aria-label="Ton">{clip && (clip.volume ?? 1) === 0 ? '🔇' : '♪'} Ton</button
+        aria-label="Ton">{clip && (clip.volume ?? 1) === 0 ? '🔇' : '♪'}</button
       >
       <button class="all" class:on={mode === 'all'} onclick={toggleAll}>
         {mode === 'all' ? '■ Stopp' : '▶ Alles'}
@@ -551,6 +572,10 @@
       audioOpen = false
     }}
   />
+{/if}
+
+{#if facesOpen && clip}
+  <FaceSheet clipId={clip.id} video={single} time={playhead} onclose={() => (facesOpen = false)} />
 {/if}
 
 {#if lookOpen && clip}
@@ -615,7 +640,7 @@
   }
   .controls {
     display: grid;
-    grid-template-columns: auto 1fr auto auto auto;
+    grid-template-columns: auto 1fr auto auto auto auto;
     align-items: center;
     gap: 8px;
   }
@@ -628,7 +653,16 @@
     text-align: center;
     font-variant-numeric: tabular-nums;
     color: var(--muted);
-    font-size: 0.9rem;
+    font-size: 0.85rem;
+    white-space: nowrap;
+    min-width: 0;
+    overflow: hidden;
+  }
+  .faces,
+  .sound {
+    font-size: 1.15rem;
+    padding-left: 0.6rem;
+    padding-right: 0.6rem;
   }
   .look,
   .sound {
@@ -636,6 +670,7 @@
     padding-right: 0.7rem;
   }
   .look.on,
+  .faces.on,
   .sound.on,
   .all.on {
     background: var(--accent);

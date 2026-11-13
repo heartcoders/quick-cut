@@ -1,3 +1,5 @@
+import { faceStore } from '../faces/faceStore.svelte'
+import { normalizeFaces } from '../faces/settings'
 import { getClipAudio, releaseClipAudio } from '../media/clipAudio'
 import { releaseClipUrl } from '../media/clipUrls'
 import { normalizeLook } from '../renderer/looks'
@@ -9,6 +11,7 @@ import {
   NO_TRANSITION,
   type AspectRatio,
   type Clip,
+  type ClipFaces,
   type ClipLook,
   type ClipRecord,
   type ClipStatus,
@@ -162,6 +165,7 @@ class ProjectStore {
       revokeAll(c.thumbnails)
       releaseClipUrl(c.blobKey)
       releaseClipAudio(c.blobKey)
+      faceStore.release(c.blobKey)
     }
     if (p.music) releaseClipAudio(p.music.blobKey)
     if (p.voiceover) releaseClipAudio(p.voiceover.blobKey)
@@ -247,6 +251,32 @@ class ProjectStore {
   applyLookToAll(id: string): void {
     const look = normalizeLook(this.getClip(id)?.look)
     for (const c of this.project.clips) c.look = { ...look }
+    this.scheduleSave()
+  }
+
+  /** Gesichter-Effekt ändern (Modus, Stärke, Sticker). */
+  setFaces(id: string, patch: Partial<ClipFaces>): void {
+    const clip = this.getClip(id)
+    if (!clip) return
+    this.updateClip(id, { faces: normalizeFaces({ ...clip.faces, ...patch }) })
+  }
+
+  /** Ein Gesicht vom Effekt ausnehmen bzw. wieder einschließen. */
+  toggleFace(id: string, faceId: number): void {
+    const clip = this.getClip(id)
+    if (!clip) return
+    const f = normalizeFaces(clip.faces)
+    const excluded = f.excluded.includes(faceId) ? f.excluded.filter((n) => n !== faceId) : [...f.excluded, faceId]
+    this.updateClip(id, { faces: { ...f, excluded } })
+  }
+
+  /** Modus, Stärke und Sticker auf alle Clips übertragen (Ausnahmen bleiben je Clip). */
+  applyFacesToAll(id: string): void {
+    const src = normalizeFaces(this.getClip(id)?.faces)
+    for (const c of this.project.clips) {
+      const own = normalizeFaces(c.faces)
+      c.faces = { ...src, excluded: c.id === id ? src.excluded : own.excluded }
+    }
     this.scheduleSave()
   }
 
@@ -399,6 +429,7 @@ class ProjectStore {
     revokeAll(clip!.thumbnails)
     releaseClipUrl(clip!.blobKey)
     releaseClipAudio(clip!.blobKey)
+    faceStore.release(clip!.blobKey)
     this.scheduleSave()
     await db.deleteClipData(clip!.blobKey, clip!.thumbKeys)
   }

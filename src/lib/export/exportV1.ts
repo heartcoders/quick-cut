@@ -6,6 +6,7 @@ import { pickRecorderMimeType } from '../platform/mediaFormat'
 import type { AspectRatio } from '../project/types'
 import { EXPORT_FPS } from '../renderer/geometry'
 import type { AudioGraph } from '../renderer/audioGraph'
+import { withFaces } from '../faces/place'
 import type { RenderClip, Renderer } from '../renderer/types'
 
 export const EXPORT_VIDEO_BITRATE = 8_000_000
@@ -107,8 +108,11 @@ export function startRender(opts: RenderOptions): RenderJob {
     if (!f) return
     const from = clips[f.fromIndex]
     renderer.setTime(timelineNow())
-    if (f.to) renderer.drawTransition(f.from, f.to, f.p, f.type, from, clips[f.fromIndex + 1])
-    else renderer.drawVideo(f.from, from)
+    // Lokale Clip-Zeit = currentTime des jeweiligen Videos.
+    const pf = from && withFaces(from, f.from.currentTime)
+    const next = clips[f.fromIndex + 1]
+    if (f.to) renderer.drawTransition(f.from, f.to, f.p, f.type, pf, next && withFaces(next, f.to.currentTime))
+    else renderer.drawVideo(f.from, pf)
   }
 
   const draw = () => {

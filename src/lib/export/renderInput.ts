@@ -1,3 +1,6 @@
+import { faceStore } from '../faces/faceStore.svelte'
+import { renderFaces } from '../faces/place'
+import { normalizeFaces } from '../faces/settings'
 import { getClipAudio } from '../media/clipAudio'
 import { getClipUrl } from '../media/clipUrls'
 import type { Clip, MusicTrack, ProjectRecord, Transition, VoiceoverTrack } from '../project/types'
@@ -6,8 +9,13 @@ import type { RenderClip } from '../renderer/types'
 import type { ProjectAudioInput } from '../timeline/audioSchedule'
 import type { TransitionSpec } from '../timeline/timeline'
 
-/** Wandelt Store-Clips in Renderer-Eingaben (mit aufgelösten Object-URLs). */
+/**
+ * Wandelt Store-Clips in Renderer-Eingaben (mit aufgelösten Object-URLs und
+ * Gesichtern). Liest alles Reaktive synchron – in einem $effect aufgerufen,
+ * läuft er bei Änderungen (auch neuen Gesichter-Analysen) erneut.
+ */
 export async function buildRenderClips(clips: readonly Clip[]): Promise<RenderClip[]> {
+  void faceStore.revision
   const snap = clips.map((c) => ({
     blobKey: c.blobKey,
     duration: c.duration,
@@ -18,9 +26,17 @@ export async function buildRenderClips(clips: readonly Clip[]): Promise<RenderCl
     panY: c.panY ?? 0.5,
     look: normalizeLook(c.look),
     volume: c.volume ?? 1,
+    faces: c.faces?.mode && c.faces.mode !== 'off' ? normalizeFaces(c.faces) : undefined,
   }))
-  const urls = await Promise.all(snap.map((c) => getClipUrl(c)))
-  return snap.flatMap((c, i) => (urls[i] ? [{ ...c, url: urls[i]! }] : []))
+  const [urls, tracks] = await Promise.all([
+    Promise.all(snap.map((c) => getClipUrl(c))),
+    Promise.all(snap.map((c) => (c.faces ? faceStore.get(c.blobKey) : null))),
+  ])
+  return snap.flatMap(({ faces, ...c }, i) => {
+    if (!urls[i]) return []
+    const faceFx = renderFaces(faces, tracks[i]?.tracks)
+    return [{ ...c, url: urls[i]!, ...(faceFx ? { faceFx } : {}) }]
+  })
 }
 
 export function plainTransitions(ts: readonly Transition[]): TransitionSpec[] {

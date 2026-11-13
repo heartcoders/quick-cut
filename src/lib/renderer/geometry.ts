@@ -1,3 +1,4 @@
+import type { FaceDraw } from '../faces/place'
 import type { AspectRatio, ClipLook } from '../project/types'
 
 export const EXPORT_FPS = 30
@@ -30,6 +31,8 @@ export interface Placement {
   panY: number
   /** Filter und Effekte; fehlt = neutral. */
   look?: ClipLook
+  /** Gesichter in diesem Frame (aufrechte Quellkoordinaten 0…1), siehe withFaces. */
+  faces?: FaceDraw[]
 }
 
 export const CENTER: Placement = { rotation: 0, panX: 0.5, panY: 0.5 }

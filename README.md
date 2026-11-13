@@ -14,6 +14,7 @@ Gebaut mit Vite, Svelte 5 und TypeScript.
 - **Bildausschnitt** pro Clip verschieben, Format 9:16, 1:1 oder 16:9
 - **Übergänge**: Überblenden, Schieben, Wischen
 - **Look** pro Clip: Farbfilter mit Stärkeregler, dazu Filmkorn, Vignette, VHS und Glitch, auf Wunsch für alle Clips
+- **Gesichter** pro Clip: automatisch erkennen und verfolgen, dann weichzeichnen, verpixeln oder mit einem Emoji verdecken; einzelne Gesichter lassen sich antippen und ausnehmen
 - **Ton**: Lautstärke pro Clip, Hintergrundmusik aus eigener Datei (Startpunkt, Ausblenden, automatisch leiser bei Sprache) und Voiceover fürs ganze Video
 - **Export** als MP4 (1080p, H.264 + AAC), danach Teilen bzw. Sichern in Fotos oder Download
 - **PWA**: installierbar und offline nutzbar
@@ -21,6 +22,8 @@ Gebaut mit Vite, Svelte 5 und TypeScript.
 ## Datenschutz
 
 Videos verlassen nie das Gerät. Clips und Projekt liegen in der IndexedDB des Browsers, Rendering und Export laufen lokal (WebGL2 / WebCodecs).
+
+Auch die Gesichtserkennung läuft auf dem Gerät: Modell (`public/models`) und MediaPipe-WASM liefert die App selbst aus, ohne CDN. Das WASM (~15 MB) wird erst beim ersten „Gesichter erkennen“ geladen und danach vom Service Worker gecacht. `npm run dev`/`build` kopieren es per `scripts/copy-mediapipe.mjs` aus `node_modules` nach `public/mediapipe`.
 
 ## Browser-Anforderungen
 
@@ -78,6 +81,7 @@ Die App nutzt einen Hash-Router (`#/`, `#/settings`, `#/p/<projekt>/record|cut|e
 - `src/lib/project`: Typen, IndexedDB (`idb`), Projekt-Store (Runes)
 - `src/lib/router.svelte.ts`: Hash-Router
 - `src/lib/capture`: Kamera, MediaRecorder, Record-Button (Zustandsmaschine)
+- `src/lib/faces`: Gesichtserkennung (MediaPipe, lokal), Tracking, Effekt-Parameter für den Renderer
 - `src/lib/media`: Probe, Filmstreifen, Pipeline, Player (Trim-Bereich, A/B-Sequenz), Clip-Audio
 - `src/lib/import`: Galerie-Import
 - `src/lib/timeline`: Zeitberechnung (resolve, Trim-Griffe, Audio-Planung)

@@ -3,6 +3,7 @@
   import { resumePendingClips } from './lib/media/pipeline'
   import { requestPersistentStorage } from './lib/project/db'
   import { store } from './lib/project/store.svelte'
+  import { pwaUpdate } from './lib/platform/pwaUpdate.svelte'
   import { router } from './lib/router.svelte'
   import Cut from './routes/Cut.svelte'
   import Export from './routes/Export.svelte'
@@ -14,6 +15,7 @@
   onMount(() => {
     const stopRouter = router.start()
     void requestPersistentStorage()
+    pwaUpdate.start()
 
     // Ausstehende Änderungen sichern, bevor iOS die Seite einfriert.
     const flush = () => void store.flush()
@@ -47,6 +49,12 @@
         else router.go('home', { replace: true })
       })
     })
+  })
+
+  // Wartendes Update einspielen, sobald man auf Start oder Einstellungen ist.
+  $effect(() => {
+    void router.current
+    untrack(() => pwaUpdate.reloadIfIdle())
   })
 
   const ready = $derived(store.loaded && store.project.id === router.projectId)

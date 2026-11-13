@@ -1,3 +1,4 @@
+import { withFaces } from '../faces/place'
 import { once, seekTo } from '../media/video'
 import type { AspectRatio } from '../project/types'
 import { resolveFrame, totalDuration, type TransitionSpec, type TransitionType } from '../timeline/timeline'
@@ -74,9 +75,9 @@ export abstract class BaseRenderer implements Renderer {
     if (f.to) {
       const to = this.#clips[f.to.index]!
       await showAt(b, to, f.to.localTime)
-      this.drawTransition(a, b, f.p, f.type, from, to)
+      this.drawTransition(a, b, f.p, f.type, withFaces(from, f.from.localTime), withFaces(to, f.to.localTime))
     } else {
-      this.drawVideo(a, from)
+      this.drawVideo(a, withFaces(from, f.from.localTime))
     }
   }
 

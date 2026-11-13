@@ -1,3 +1,5 @@
+import { MAX_FACES } from '../faces/place'
+import { ATLAS_GRID, STICKER_SCALE } from '../faces/stickers'
 import type { TransitionType } from '../timeline/timeline'
 
 export const VERTEX = /* glsl */ `#version 300 es
@@ -8,14 +10,81 @@ void main() {
   gl_Position = vec4(aPos, 0.0, 1.0);
 }`
 
+/**
+ * e = off + uv * sc ist die Koordinate im aufrechten Quellbild (y nach oben,
+ * wegen UNPACK_FLIP_Y). rotUv dreht sie in die Texturkoordinate.
+ */
 const COVER_FN = /* glsl */ `
-vec2 coverUv(vec2 uv, vec2 sc, vec2 off, float rot) {
-  vec2 c = off + uv * sc - 0.5;
+vec2 rotUv(vec2 e, float rot) {
+  vec2 c = e - 0.5;
   float s = sin(rot);
   float k = cos(rot);
   return vec2(k * c.x - s * c.y, s * c.x + k * c.y) + 0.5;
+}
+vec2 coverUv(vec2 uv, vec2 sc, vec2 off, float rot) {
+  return rotUv(off + uv * sc, rot);
 }`
 
+/**
+ * Gesichter (siehe faces/place.ts): faces[i] = Ellipse (cx, cy, rx, ry) im
+ * aufrechten Bild mit y nach unten, ffx[i] = (Modus 1 Blur | 2 Pixel | 3 Sticker,
+ * Stärke, Sticker-Index, –). Alles im Quellraum → wandert mit Pan und Übergang.
+ */
+const FACE_FN = /* glsl */ `
+uniform sampler2D uStickers;
+vec2 faceCenter(vec4 f) { return vec2(f.x, 1.0 - f.y); }
+// Groesse des aufrechten Quellbilds in Pixeln
+vec2 uprightSize(sampler2D tex, float rot) {
+  vec2 ts = vec2(textureSize(tex, 0));
+  return abs(sin(rot)) > 0.5 ? ts.yx : ts;
+}
+// Weichgezeichnete bzw. verpixelte Farbe (rgb) und Maske (a) an e
+vec4 faceColor(sampler2D tex, vec2 e, float rot, vec4 faces[MAX_FACES], vec4 ffx[MAX_FACES], int n) {
+  vec2 px = uprightSize(tex, rot);
+  for (int i = 0; i < MAX_FACES; i++) {
+    if (i >= n) break;
+    if (ffx[i].x > 2.5) continue;
+    vec4 f = faces[i];
+    float d = length((e - faceCenter(f)) / f.zw);
+    if (d >= 1.0) continue;
+    float m = 1.0 - smoothstep(0.85, 1.0, d);
+    float facePx = 2.0 * f.w * px.y;
+    vec3 c = vec3(0.0);
+    if (ffx[i].x < 1.5) {
+      // Spirale (goldener Winkel), pro Pixel gedreht: Aliasing wird zu feinem Rauschen
+      vec2 rad = facePx * (0.05 + 0.15 * ffx[i].y) / px;
+      float j = hash(gl_FragCoord.xy) * 6.2832;
+      for (int k = 0; k < 32; k++) {
+        float fk = float(k) + 0.5;
+        float a = fk * 2.39996 + j;
+        c += textureLod(tex, rotUv(e + vec2(cos(a), sin(a)) * sqrt(fk / 32.0) * rad, rot), 0.0).rgb;
+      }
+      c /= 32.0;
+    } else {
+      vec2 cell = max(3.0, facePx * (0.06 + 0.14 * ffx[i].y)) / px;
+      c = textureLod(tex, rotUv((floor(e / cell) + 0.5) * cell, rot), 0.0).rgb;
+    }
+    return vec4(c, m);
+  }
+  return vec4(0.0);
+}
+// Emoji-Sticker ueber die Gesichter legen (Atlas, vormultipliziertes Alpha)
+vec3 faceStickers(vec3 c, vec2 e, vec2 px, vec4 faces[MAX_FACES], vec4 ffx[MAX_FACES], int n) {
+  const float G = ${ATLAS_GRID}.0;
+  for (int i = 0; i < MAX_FACES; i++) {
+    if (i >= n) break;
+    if (ffx[i].x < 2.5) continue;
+    vec4 f = faces[i];
+    float side = max(2.0 * f.z * px.x, 2.0 * f.w * px.y) * ${STICKER_SCALE.toFixed(2)};
+    vec2 l = (e - faceCenter(f)) * px / side + 0.5;
+    if (l.x < 0.0 || l.y < 0.0 || l.x > 1.0 || l.y > 1.0) continue;
+    vec2 cell = vec2(mod(ffx[i].z, G), floor(ffx[i].z / G));
+    vec2 auv = vec2((cell.x + l.x) / G, 1.0 - (cell.y + 1.0 - l.y) / G);
+    vec4 s = textureLod(uStickers, auv, 0.0);
+    c = c * (1.0 - s.a) + s.rgb;
+  }
+  return c;
+}`
 /**
  * Look (Filter + Effekte) pro Clip. Reihenfolge:
  * 1. UV-Verzerrung (VHS-Zeilenwackeln, Glitch-Blockversatz)
@@ -47,7 +116,9 @@ vec3 grade(vec3 c, vec4 g, vec4 g2) {
   c = c * (1.0 - 0.25 * g2.y) + 0.12 * g2.y;
   return c;
 }
-vec4 sampleLook(sampler2D tex, vec2 uv, vec2 sc, vec2 off, float rot, vec4 g, vec4 g2, vec4 fx) {
+${FACE_FN}
+vec4 sampleLook(sampler2D tex, vec2 uv, vec2 sc, vec2 off, float rot, vec4 g, vec4 g2, vec4 fx,
+                vec4 faces[MAX_FACES], vec4 ffx[MAX_FACES], int nf) {
   float frame = floor(uTime * 30.0);
   float vhs = fx.z;
   float glitch = fx.w;
@@ -64,12 +135,19 @@ vec4 sampleLook(sampler2D tex, vec2 uv, vec2 sc, vec2 off, float rot, vec4 g, ve
     suv.x += on * (hash(vec2(band + 7.0, frame)) - 0.5) * 0.2 * glitch;
     split += 0.015 * glitch * burst;
   }
-  vec3 c = texture(tex, coverUv(suv, sc, off, rot)).rgb;
+  vec2 e = off + suv * sc;
+  vec3 c = texture(tex, rotUv(e, rot)).rgb;
   if (split > 0.0) {
     c.r = texture(tex, coverUv(suv + vec2(split, 0.0), sc, off, rot)).r;
     c.b = texture(tex, coverUv(suv - vec2(split, 0.0), sc, off, rot)).b;
   }
+  // nach dem RGB-Versatz, damit kein Farbkanal das Gesicht unveraendert zeigt
+  if (nf > 0) {
+    vec4 fc = faceColor(tex, e, rot, faces, ffx, nf);
+    c = mix(c, fc.rgb, fc.a);
+  }
   c = grade(c, g, g2);
+  if (nf > 0) c = faceStickers(c, e, uprightSize(tex, rot), faces, ffx, nf);
   if (vhs > 0.0) {
     c *= 1.0 - 0.18 * vhs * step(0.5, fract(uv.y * uRes.y / 4.0));
     c = mix(c, c * vec3(1.04, 0.97, 1.06) + vec3(0.0, 0.0, 0.02), vhs);
@@ -86,13 +164,17 @@ vec4 sampleLook(sampler2D tex, vec2 uv, vec2 sc, vec2 off, float rot, vec4 g, ve
 }`
 
 const SIDE_A = /* glsl */ `
+#define MAX_FACES ${MAX_FACES}
 uniform sampler2D uFrom;
 uniform vec2 uScaleA;
 uniform vec2 uOffsetA;
 uniform float uRotA;
 uniform vec4 uGradeA;
 uniform vec4 uGrade2A;
-uniform vec4 uFxA;`
+uniform vec4 uFxA;
+uniform vec4 uFaceA[MAX_FACES];
+uniform vec4 uFaceFxA[MAX_FACES];
+uniform int uFaceNA;`
 
 /** Ein Clip ohne Übergang: Ziel füllen, zuschneiden, Look anwenden. */
 export const COVER_FRAGMENT = /* glsl */ `#version 300 es
@@ -103,7 +185,7 @@ out vec4 outColor;
 ${COVER_FN}
 ${LOOK_FN}
 void main() {
-  outColor = sampleLook(uFrom, vUv, uScaleA, uOffsetA, uRotA, uGradeA, uGrade2A, uFxA);
+  outColor = sampleLook(uFrom, vUv, uScaleA, uOffsetA, uRotA, uGradeA, uGrade2A, uFxA, uFaceA, uFaceFxA, uFaceNA);
 }`
 
 /**
@@ -146,12 +228,15 @@ uniform float uRotB;
 uniform vec4 uGradeB;
 uniform vec4 uGrade2B;
 uniform vec4 uFxB;
+uniform vec4 uFaceB[MAX_FACES];
+uniform vec4 uFaceFxB[MAX_FACES];
+uniform int uFaceNB;
 uniform float progress;
 out vec4 outColor;
 ${COVER_FN}
 ${LOOK_FN}
-vec4 getFromColor(vec2 uv) { return sampleLook(uFrom, uv, uScaleA, uOffsetA, uRotA, uGradeA, uGrade2A, uFxA); }
-vec4 getToColor(vec2 uv) { return sampleLook(uTo, uv, uScaleB, uOffsetB, uRotB, uGradeB, uGrade2B, uFxB); }
+vec4 getFromColor(vec2 uv) { return sampleLook(uFrom, uv, uScaleA, uOffsetA, uRotA, uGradeA, uGrade2A, uFxA, uFaceA, uFaceFxA, uFaceNA); }
+vec4 getToColor(vec2 uv) { return sampleLook(uTo, uv, uScaleB, uOffsetB, uRotB, uGradeB, uGrade2B, uFxB, uFaceB, uFaceFxB, uFaceNB); }
 ${TRANSITIONS[type]}
 void main() {
   outColor = transition(vUv);
